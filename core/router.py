@@ -15,11 +15,14 @@ _CODE_SIGNALS = [
 ]
 
 
-def route(text: str) -> tuple[str, str]:
+def route(text: str, cfg: dict | None = None) -> tuple[str, str]:
     m = _MENTION.match(text)
     if m:
         return m.group(1).lower(), text[m.end():]
+    default = (cfg or {}).get("default_provider", "claude")
+    if cfg is not None and not cfg.get("routing_rules_enabled", True):
+        return default, text
     for sig in _CODE_SIGNALS:
         if sig.search(text):
             return "codex", text
-    return "claude", text
+    return default, text

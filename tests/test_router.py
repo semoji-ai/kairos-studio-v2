@@ -30,3 +30,21 @@ def test_mention_is_stripped():
 def test_plain_text_passes_through():
     _, cleaned = route("안녕하세요")
     assert cleaned == "안녕하세요"
+
+
+def test_rules_disabled_uses_default_provider():
+    cfg = {"routing_rules_enabled": False, "default_provider": "codex"}
+    assert route("점심 뭐 먹을까", cfg)[0] == "codex"
+    assert route("core/server.py 고쳐줘", cfg)[0] == "codex"  # 규칙 꺼짐
+
+
+def test_mention_beats_disabled_rules():
+    cfg = {"routing_rules_enabled": False, "default_provider": "codex"}
+    provider, cleaned = route("@claude 인사해", cfg)
+    assert provider == "claude" and cleaned == "인사해"
+
+
+def test_default_provider_when_no_signal():
+    cfg = {"routing_rules_enabled": True, "default_provider": "codex"}
+    assert route("점심 뭐 먹을까", cfg)[0] == "codex"
+    assert route("git rebase 꼬였어", cfg)[0] == "codex"
