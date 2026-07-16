@@ -94,6 +94,23 @@ CLI들은 툴 실행 권한을 가진 에이전트다. 채팅 앱 뒤에서 돌 
 CLI 부팅 오버헤드로 API 대비 첫 토큰이 느림 — P1에서는 수용.
 필요 시 프로세스 풀로 후행 개선.
 
+## 크로스플랫폼 (macOS + Windows)
+
+P1부터 Windows 동작을 요구사항으로 한다. 스택(Tauri/React/Python/SQLite)은
+모두 크로스플랫폼. 구현 시 지킬 것:
+
+- **프로세스 스폰**: shell 경유 금지, 실행파일 직접 spawn. CLI 탐색은
+  PATH 조회로 (`claude`/`claude.cmd`, `codex`/`codex.cmd` — Windows는
+  npm 래퍼가 .cmd일 수 있음).
+- **watchdog**: parent-death 감지는 stdin-EOF 방식이라 양 OS 동일 동작
+  (Windows 전용 job object 불필요 — 기존 방식 그대로 이식).
+- **경로/저장소**: 하드코딩 금지. 데이터 디렉토리는 Tauri app-data dir 기준
+  (macOS `~/Library/Application Support/`, Windows `%APPDATA%`).
+- **인코딩**: subprocess stdout은 UTF-8 강제 (Windows 기본 cp949 함정 방지,
+  한국어 대화 필수 요건).
+- **CI/검증**: 개발은 macOS에서, Windows는 각 단계 완료 시 수동 스모크
+  (Windows 머신은 hwp-control 건과 동일하게 사용자 보유).
+
 ## 테스트
 
 - provider: mock CLI(stdout에 고정 JSONL을 뱉는 가짜 실행파일)로 계약 테스트
