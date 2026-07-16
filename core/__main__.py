@@ -3,24 +3,41 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import sqlite3
 import sys
 import threading
 from pathlib import Path
 
+from core import settings
 from core.server import make_server
 from core.store import Store
 
+_DEFAULT_DATA_DIR = Path.home() / ".kairos-studio"
+
+
+def _default_data_dir() -> Path:
+    return _DEFAULT_DATA_DIR
+
 
 def _data_dir() -> Path:
+    # env KAIROS_DATA_DIR은 설정보다 우선(테스트·Tauri 경로 호환)
     d = os.environ.get("KAIROS_DATA_DIR")
-    return Path(d).expanduser() if d else Path.home() / ".kairos-studio"
+    if d:
+        return Path(d).expanduser()
+    cfg_dir = settings.load().get("data_dir")
+    return Path(cfg_dir).expanduser() if cfg_dir else _default_data_dir()
 
 
 def build(argv=None):
     host = "127.0.0.1"
     port = int(os.environ.get("PORT", "0"))
     token = os.environ.get("TOKEN") or secrets.token_urlsafe(24)
-    store = Store(_data_dir() / "kairos.db")
+    data_dir = _data_dir()
+    try:
+        store = Store(data_dir / "kairos.db")
+    except (OSError, sqlite3.Error):
+        os.environ["KAIROS_STORE_FALLBACK"] = "1"
+        store = Store(_default_data_dir() / "kairos.db")
     server = make_server(host, port, token, store)
     info = {"host": host, "port": server.server_address[1], "token": token}
     return server, info

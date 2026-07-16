@@ -2,11 +2,15 @@
 from __future__ import annotations
 
 import json
+import os
 import secrets
+import shutil
+import subprocess
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from core import providers
+from core import providers, settings
 from core.router import route
 from core.store import Store
 
@@ -22,7 +26,56 @@ def _last_session_ref(store: Store, session_id: int, provider: str) -> str | Non
     return None
 
 
+_CLI_LOGIN_HINT = {"claude": "claude /login", "codex": "codex login"}
+
+
+def _resolve_cmd(name: str) -> list[str] | None:
+    """providers.claude/codex의 _base_cmd와 동일 규칙: env 오버라이드 우선."""
+    env_key = f"KAIROS_{name.upper()}_CMD"
+    override = os.environ.get(env_key)
+    if override:
+        return override.split()
+    exe = shutil.which(name)
+    return [exe] if exe else None
+
+
+def _cli_version(cmd: list[str]) -> str | None:
+    try:
+        r = subprocess.run(cmd + ["--version"], capture_output=True,
+                            timeout=10, encoding="utf-8", errors="replace")
+    except Exception:
+        return None
+    out = (r.stdout or r.stderr or "").strip()
+    return out.splitlines()[0] if out else None
+
+
+def _cli_authed(name: str, cmd: list[str]) -> bool | None:
+    # 실측(2026-07): `claude auth status` returncode==0(로그인 시), `codex login
+    # status` returncode==0(로그인 시) — 둘 다 신뢰 가능한 서브커맨드.
+    try:
+        if name == "codex":
+            r = subprocess.run(cmd + ["login", "status"], capture_output=True,
+                                timeout=10, encoding="utf-8", errors="replace")
+        else:
+            r = subprocess.run(cmd + ["auth", "status"], capture_output=True,
+                                timeout=10, encoding="utf-8", errors="replace")
+        return r.returncode == 0
+    except Exception:
+        return None
+
+
+def _cli_status_one(name: str) -> dict:
+    cmd = _resolve_cmd(name)
+    installed = cmd is not None
+    version = _cli_version(cmd) if installed else None
+    authed = _cli_authed(name, cmd) if installed else None
+    return {"installed": installed, "version": version, "authed": authed,
+            "login_hint": _CLI_LOGIN_HINT[name]}
+
+
 def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTPServer:
+    state = {"store": store}
+
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
@@ -85,18 +138,40 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
                 return self._send(200, {"ok": True})
             # 인증은 API 라우트에만. 그 외 경로는 Task 8에서 정적 서빙이 된다
             # (토큰이 index.html 주입으로 전달되므로 정적은 인증 불가/불요).
-            if u.path in ("/sessions", "/messages"):
+            if u.path in ("/sessions", "/messages", "/settings", "/storage", "/cli/status"):
                 if not self._authed():
                     return self._send(401, {"error": "unauthorized"})
                 if u.path == "/sessions":
-                    return self._send(200, {"sessions": store.list_sessions()})
-                q = parse_qs(u.query)
-                try:
-                    sid = int(q.get("session_id", [""])[0])
-                except ValueError:
-                    return self._send(400, {"error": "bad session_id"})
-                return self._send(200, {"messages": store.list_messages(sid)})
+                    return self._send(200, {"sessions": state["store"].list_sessions()})
+                if u.path == "/messages":
+                    q = parse_qs(u.query)
+                    try:
+                        sid = int(q.get("session_id", [""])[0])
+                    except ValueError:
+                        return self._send(400, {"error": "bad session_id"})
+                    return self._send(200, {"messages": state["store"].list_messages(sid)})
+                if u.path == "/settings":
+                    return self._send(200, settings.load())
+                if u.path == "/storage":
+                    return self._storage()
+                if u.path == "/cli/status":
+                    return self._send(200, {"claude": _cli_status_one("claude"),
+                                             "codex": _cli_status_one("codex")})
             return self._serve_static()
+
+        def _storage(self):
+            db_path = getattr(state["store"], "_path", None)
+            if db_path is None:
+                db_path = Path(settings.load()["data_dir"]).expanduser() / "kairos.db"
+            db_path = Path(db_path)
+            data_dir = str(db_path.parent)
+            try:
+                db_bytes = os.path.getsize(db_path)
+            except OSError:
+                db_bytes = 0
+            fallback = os.environ.get("KAIROS_STORE_FALLBACK") == "1"
+            return self._send(200, {"data_dir": data_dir, "db_bytes": db_bytes,
+                                     "fallback": fallback})
 
         _CTYPES = {".html": "text/html", ".js": "text/javascript",
                    ".css": "text/css", ".svg": "image/svg+xml",
@@ -146,7 +221,7 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
                 return self._send(400, {"error": "bad json"})
             if self.path == "/feedback":
                 try:
-                    fid = store.add_feedback(int(body["message_id"]),
+                    fid = state["store"].add_feedback(int(body["message_id"]),
                                              str(body["kind"]),
                                              str(body.get("payload", "")))
                 except (KeyError, TypeError, ValueError) as exc:
@@ -156,22 +231,61 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
                 return self._chat(body)
             return self._send(404, {"error": "not found"})
 
+        def do_PUT(self):
+            if not self._host_ok():
+                return self._send(403, {"error": "forbidden host"})
+            if not self._authed():
+                return self._send(401, {"error": "unauthorized"})
+            body = self._body()
+            if body is None:
+                return self._send(400, {"error": "bad json"})
+            if self.path == "/settings":
+                return self._put_settings(body)
+            return self._send(404, {"error": "not found"})
+
+        def _put_settings(self, patch: dict):
+            old_data_dir = settings.load()["data_dir"]
+            new_data_dir = patch.get("data_dir")
+            if new_data_dir is not None and isinstance(new_data_dir, str):
+                new_dir = Path(new_data_dir).expanduser()
+                try:
+                    new_dir.mkdir(parents=True, exist_ok=True)
+                except OSError as exc:
+                    return self._send(400, {"error": f"cannot create data_dir: {exc}"})
+                old_db = Path(old_data_dir).expanduser() / "kairos.db"
+                new_db = new_dir / "kairos.db"
+                if old_db.exists() and not new_db.exists():
+                    try:
+                        shutil.copy2(old_db, new_db)
+                    except OSError as exc:
+                        return self._send(400, {"error": f"cannot copy db: {exc}"})
+            try:
+                merged = settings.save(patch)
+            except ValueError as exc:
+                return self._send(400, {"error": str(exc)})
+            if new_data_dir is not None and isinstance(new_data_dir, str):
+                new_dir = Path(new_data_dir).expanduser()
+                state["store"] = Store(new_dir / "kairos.db")
+            return self._send(200, merged)
+
         def _chat(self, body: dict):
             text = str(body.get("text", "")).strip()
             if not text:
                 return self._send(400, {"error": "empty text"})
+            cfg = settings.load()
+            store = state["store"]
             session_id = body.get("session_id")
             if session_id is None:
                 session_id = store.create_session(text[:30])
             session_id = int(session_id)
-            provider_name, cleaned = route(text)
+            provider_name, cleaned = route(text, cfg)
             store.add_message(session_id, "user", [{"type": "text", "text": text}])
             session_ref = _last_session_ref(store, session_id, provider_name)
 
             self._sse_start()
             final = None
             try:
-                for ev in providers.get(provider_name).chat(cleaned, session_ref=session_ref):
+                for ev in providers.get(provider_name).chat(cleaned, session_ref=session_ref, cfg=cfg):
                     if ev["type"] == "delta":
                         self._sse(ev)
                     elif ev["type"] == "error":

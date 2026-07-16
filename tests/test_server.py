@@ -26,9 +26,10 @@ def srv(tmp_path, monkeypatch):
     server.shutdown()
 
 
-def _req(url, path, body=None, token=TOKEN):
+def _req(url, path, body=None, token=TOKEN, method=None):
     data = json.dumps(body).encode() if body is not None else None
-    r = urllib.request.Request(url + path, data=data, method="POST" if data else "GET")
+    m = method or ("POST" if data else "GET")
+    r = urllib.request.Request(url + path, data=data, method=m)
     if token:
         r.add_header("Authorization", f"Bearer {token}")
     return urllib.request.urlopen(r)
@@ -120,3 +121,52 @@ def test_static_serves_index_with_token(srv, tmp_path, monkeypatch):
     monkeypatch.setenv("KAIROS_STATIC_DIR", str(tmp_path))
     html = urllib.request.urlopen(url + "/").read().decode()
     assert "window.__KAIROS__" in html and TOKEN in html
+
+
+@pytest.fixture(autouse=True)
+def _cfg_isolated(tmp_path, monkeypatch):
+    monkeypatch.setenv("KAIROS_CONFIG_DIR", str(tmp_path / "cfg"))
+
+
+def test_settings_roundtrip(srv):
+    url, _ = srv
+    s = json.load(_req(url, "/settings"))
+    assert s["default_provider"] == "claude"
+    body = {"default_provider": "codex", "routing_rules_enabled": False}
+    s2 = json.load(_req(url, "/settings", body, method="PUT"))
+    assert s2["default_provider"] == "codex"
+    # 설정이 라우팅에 반영: 일반 텍스트가 codex로
+    ev = _sse_events(_req(url, "/chat", {"text": "안녕 잘 지냈어?"}))
+    assert ev[-1]["provider"] == "codex"
+
+
+def test_settings_reject_bad_value(srv):
+    url, _ = srv
+    with pytest.raises(urllib.error.HTTPError) as e:
+        _req(url, "/settings", {"codex_sandbox": "danger-full-access"}, method="PUT")
+    assert e.value.code == 400
+    assert json.load(_req(url, "/settings"))["codex_sandbox"] == "read-only"
+
+
+def test_data_dir_change_copies_db_and_reopens(srv, tmp_path):
+    url, store = srv
+    done = _sse_events(_req(url, "/chat", {"text": "첫 대화"}))[-1]
+    new_dir = tmp_path / "moved"
+    json.load(_req(url, "/settings", {"data_dir": str(new_dir)}, method="PUT"))
+    assert (new_dir / "kairos.db").exists()          # 복사됨
+    msgs = json.load(_req(url, f"/messages?session_id={done['session_id']}"))["messages"]
+    assert len(msgs) == 2                             # 새 store에서 과거 대화 조회됨
+
+
+def test_storage_info(srv):
+    url, _ = srv
+    info = json.load(_req(url, "/storage"))
+    assert "data_dir" in info and info["db_bytes"] >= 0 and info["fallback"] is False
+
+
+def test_cli_status_with_fakes(srv):
+    url, _ = srv
+    st = json.load(_req(url, "/cli/status"))
+    assert st["claude"]["installed"] is True   # KAIROS_CLAUDE_CMD 세팅됨
+    assert st["codex"]["installed"] is True
+    assert st["claude"]["login_hint"]
