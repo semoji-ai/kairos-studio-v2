@@ -1,0 +1,14 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "IPC for the main window, which is served from the local sidecar (a remote http://127.0.0.1 origin).",
+  "windows": ["main"],
+  "remote": {
+    "urls": ["http://127.0.0.1:*", "http://localhost:*"]
+  },
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-emit",
+    "core:event:allow-unlisten"
+  ]
+}
