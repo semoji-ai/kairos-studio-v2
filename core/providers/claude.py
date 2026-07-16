@@ -16,17 +16,19 @@ def _base_cmd() -> list[str] | None:
     return [exe] if exe else None
 
 
-def chat(prompt: str, session_ref: str | None = None) -> Iterator[dict]:
+def chat(prompt: str, session_ref: str | None = None,
+         cfg: dict | None = None) -> Iterator[dict]:
     base = _base_cmd()
     if base is None:
         yield {"type": "error", "error": "claude CLI not found in PATH"}
         return
+    mode = (cfg or {}).get("claude_permission_mode", "default")
     cmd = base + [
         "-p", prompt,
         "--output-format", "stream-json",
         "--verbose",
         "--include-partial-messages",
-        "--permission-mode", "default",  # 안전: 비대화 모드에서 위험 툴 거부
+        "--permission-mode", mode,  # 안전: 비대화 모드에서 위험 툴 거부
     ]
     if session_ref:
         cmd += ["--resume", session_ref]

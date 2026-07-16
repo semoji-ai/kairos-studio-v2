@@ -16,12 +16,14 @@ def _base_cmd() -> list[str] | None:
     return [exe] if exe else None
 
 
-def chat(prompt: str, session_ref: str | None = None) -> Iterator[dict]:
+def chat(prompt: str, session_ref: str | None = None,
+         cfg: dict | None = None) -> Iterator[dict]:
     base = _base_cmd()
     if base is None:
         yield {"type": "error", "error": "codex CLI not found in PATH"}
         return
-    cmd = base + ["exec", "--json", "--sandbox", "read-only"]
+    sandbox = (cfg or {}).get("codex_sandbox", "read-only")
+    cmd = base + ["exec", "--json", "--sandbox", sandbox]
     if session_ref:
         cmd += ["resume", session_ref]
     cmd += [prompt]
