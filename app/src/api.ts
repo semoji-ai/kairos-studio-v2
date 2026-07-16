@@ -39,6 +39,33 @@ export async function sendFeedback(messageId: number, kind: "up" | "down"): Prom
   });
 }
 
+export type Settings = {
+  data_dir: string; default_provider: "claude" | "codex";
+  routing_rules_enabled: boolean;
+  codex_sandbox: "read-only" | "workspace-write";
+  claude_permission_mode: "default" | "acceptEdits";
+};
+export type CliStatus = Record<string, {
+  installed: boolean; version: string | null;
+  authed: boolean | null; login_hint: string;
+}>;
+export type StorageInfo = { data_dir: string; db_bytes: number; fallback: boolean };
+
+export async function getSettings(): Promise<Settings> {
+  return (await fetch("/settings", { headers: HDRS })).json();
+}
+export async function putSettings(patch: Partial<Settings>): Promise<Settings> {
+  const r = await fetch("/settings", { method: "PUT", headers: HDRS, body: JSON.stringify(patch) });
+  if (!r.ok) throw new Error((await r.json()).error ?? `HTTP ${r.status}`);
+  return r.json();
+}
+export async function cliStatus(): Promise<CliStatus> {
+  return (await fetch("/cli/status", { headers: HDRS })).json();
+}
+export async function storageInfo(): Promise<StorageInfo> {
+  return (await fetch("/storage", { headers: HDRS })).json();
+}
+
 /** POST /chat 후 SSE 스트림을 콜백으로 흘린다. done/error에서 종료. */
 export async function chat(
   text: string, sessionId: number | null,

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { chat, listMessages, listSessions, sendFeedback } from "./api";
 import type { Msg, Session } from "./api";
+import Settings from "./Settings";
 
 type Bubble = Msg | { id: "pending"; role: "assistant"; text: string };
 
@@ -15,6 +16,7 @@ export default function Chat() {
   const [pending, setPending] = useState<string | null>(null); // 스트리밍 중 텍스트
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [view, setView] = useState<"chat" | "settings">("chat");
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { listSessions().then(setSessions); }, []);
@@ -59,7 +61,11 @@ export default function Chat() {
   return (
     <div style={{ display: "flex", height: "100vh", fontFamily: "sans-serif" }}>
       <aside style={{ width: 220, borderRight: "1px solid #ddd", overflowY: "auto" }}>
-        <button style={{ margin: 8 }} onClick={() => setSessionId(null)}>+ 새 대화</button>
+        <div style={{ display: "flex", alignItems: "center", margin: 8 }}>
+          <button style={{ flex: 1 }} onClick={() => { setSessionId(null); setView("chat"); }}>+ 새 대화</button>
+          <button style={{ marginLeft: 8 }} onClick={() => setView(v => v === "chat" ? "settings" : "chat")}
+                  title="설정">⚙️</button>
+        </div>
         {sessions.map(s => (
           <div key={s.id} onClick={() => setSessionId(s.id)}
                style={{ padding: 8, cursor: "pointer",
@@ -68,6 +74,9 @@ export default function Chat() {
           </div>
         ))}
       </aside>
+      {view === "settings" ? (
+        <Settings onClose={() => setView("chat")} />
+      ) : (
       <main style={{ flex: 1, display: "flex", flexDirection: "column" }}>
         <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
           {bubbles.map((b, i) => {
@@ -102,6 +111,7 @@ export default function Chat() {
           <button onClick={send} disabled={busy} style={{ marginLeft: 8 }}>보내기</button>
         </div>
       </main>
+      )}
     </div>
   );
 }

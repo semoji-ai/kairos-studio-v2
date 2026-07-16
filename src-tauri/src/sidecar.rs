@@ -43,6 +43,7 @@ pub fn sidecar_env(repo_root: &Path, token: &str, data_dir: &Path) -> Vec<(Strin
         ("TOKEN".to_string(), token.to_string()),
         ("KAIROS_STATIC_DIR".to_string(), p(&["app", "dist"])),
         ("KAIROS_DATA_DIR".to_string(), data_dir.to_string_lossy().to_string()),
+        ("KAIROS_CONFIG_DIR".to_string(), data_dir.to_string_lossy().to_string()),
     ]
 }
 
@@ -97,6 +98,7 @@ mod tests {
         assert_eq!(get("TOKEN"), Some("tok123".to_string()));
         assert_eq!(get("KAIROS_STATIC_DIR"), Some("/repo/app/dist".to_string()));
         assert_eq!(get("KAIROS_DATA_DIR"), Some("/data".to_string()));
+        assert_eq!(get("KAIROS_CONFIG_DIR"), Some("/data".to_string()));
     }
 
     #[test]
