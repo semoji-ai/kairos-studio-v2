@@ -32,19 +32,25 @@ export default function Chat() {
     setMsgs(m => [...m, { id: -1, session_id: sessionId ?? -1, role: "user",
                           content: [{ type: "text", text }] }]);
     let acc = "";
-    await chat(text, sessionId, ev => {
-      if (ev.type === "delta") { acc += ev.text; setPending(acc); }
-      else if (ev.type === "done") {
-        setPending(null); setBusy(false);
-        setSessionId(ev.session_id);
-        listMessages(ev.session_id).then(setMsgs);   // 서버 진실로 동기화
-        listSessions().then(setSessions);
-      } else {
-        setPending(null); setBusy(false);
-        setMsgs(m => [...m, { id: -2, session_id: sessionId ?? -1, role: "assistant",
-                              content: [{ type: "text", text: `⚠️ ${ev.error}` }] }]);
-      }
-    });
+    try {
+      await chat(text, sessionId, ev => {
+        if (ev.type === "delta") { acc += ev.text; setPending(acc); }
+        else if (ev.type === "done") {
+          setPending(null); setBusy(false);
+          setSessionId(ev.session_id);
+          listMessages(ev.session_id).then(setMsgs);   // 서버 진실로 동기화
+          listSessions().then(setSessions);
+        } else {
+          setPending(null); setBusy(false);
+          setMsgs(m => [...m, { id: -2, session_id: sessionId ?? -1, role: "assistant",
+                                content: [{ type: "text", text: `⚠️ ${ev.error}` }] }]);
+        }
+      });
+    } catch {
+      setPending(null); setBusy(false);
+      setMsgs(m => [...m, { id: -2, session_id: sessionId ?? -1, role: "assistant",
+                            content: [{ type: "text", text: "⚠️ 연결 실패: 사이드카가 실행 중인지 확인하세요" }] }]);
+    }
   }
 
   const bubbles: Bubble[] = pending == null ? msgs

@@ -104,7 +104,7 @@ fn check_health_once(port: u16) -> bool {
         return false;
     };
     let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
-    let req = format!("GET /healthz HTTP/1.0\r\nHost: {addr}\r\n\r\n");
+    let req = format!("GET /health HTTP/1.0\r\nHost: {addr}\r\n\r\n");
     if stream.write_all(req.as_bytes()).is_err() {
         return false;
     }
@@ -195,14 +195,27 @@ fn kill_child(child: &mut Child) {
 }
 
 fn generate_token() -> String {
-    // Non-cryptographic dev token derived from process + time; the sidecar
-    // only trusts same-origin localhost in dev. Uniqueness, not secrecy.
+    // Dependency-free but non-guessable: RandomState's hasher is SipHash keyed
+    // with OS-provided randomness per process, so hashing pid+nanos through two
+    // independently-keyed RandomStates yields two hard-to-predict u64s. Not a
+    // CSPRNG, but the sidecar only trusts same-origin localhost anyway; this is
+    // meant to keep the token from being trivially guessable, not cryptographic.
+    use std::collections::hash_map::RandomState;
+    use std::hash::{BuildHasher, Hash, Hasher};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    let pid = std::process::id();
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    format!("kairos-dev-{}-{}", std::process::id(), nanos)
+
+    let mut h1 = RandomState::new().build_hasher();
+    (pid, nanos).hash(&mut h1);
+    let mut h2 = RandomState::new().build_hasher();
+    (nanos, pid).hash(&mut h2);
+
+    format!("kairos-dev-{:016x}{:016x}", h1.finish(), h2.finish())
 }
 
 #[cfg(test)]

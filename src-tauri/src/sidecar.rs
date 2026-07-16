@@ -58,7 +58,7 @@ pub fn parse_server_info(line: &str) -> Option<ServerInfo> {
 }
 
 pub fn health_url(port: u16) -> String {
-    format!("http://127.0.0.1:{}/healthz", port)
+    format!("http://127.0.0.1:{}/health", port)
 }
 
 pub fn response_is_ok(raw: &[u8]) -> bool {
@@ -115,7 +115,7 @@ mod tests {
 
     #[test]
     fn health_url_uses_port() {
-        assert_eq!(health_url(8080), "http://127.0.0.1:8080/healthz");
+        assert_eq!(health_url(8080), "http://127.0.0.1:8080/health");
     }
 
     #[test]

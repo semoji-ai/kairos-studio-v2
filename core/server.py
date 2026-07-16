@@ -37,6 +37,11 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
             self.end_headers()
             self.wfile.write(body)
 
+        def _host_ok(self) -> bool:
+            host = self.headers.get("Host", "")
+            host = host.rsplit(":", 1)[0] if ":" in host else host
+            return host in ("127.0.0.1", "localhost")
+
         def _authed(self) -> bool:
             hdr = self.headers.get("Authorization", "")
             if not hdr.startswith("Bearer "):
@@ -73,6 +78,8 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
 
         # ---- routes ----
         def do_GET(self):
+            if not self._host_ok():
+                return self._send(403, {"error": "forbidden host"})
             u = urlparse(self.path)
             if u.path == "/health":
                 return self._send(200, {"ok": True})
@@ -130,6 +137,8 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
             self.wfile.write(data)
 
         def do_POST(self):
+            if not self._host_ok():
+                return self._send(403, {"error": "forbidden host"})
             if not self._authed():
                 return self._send(401, {"error": "unauthorized"})
             body = self._body()

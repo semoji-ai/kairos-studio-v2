@@ -48,6 +48,15 @@ def test_health_needs_no_auth(srv):
     assert json.load(_req(url, "/health", token=None))["ok"] is True
 
 
+def test_bad_host_header_rejected(srv):
+    url, _ = srv
+    r = urllib.request.Request(url + "/health", method="GET")
+    r.add_header("Host", "evil.example")
+    with pytest.raises(urllib.error.HTTPError) as e:
+        urllib.request.urlopen(r)
+    assert e.value.code == 403
+
+
 def test_auth_required_elsewhere(srv):
     url, _ = srv
     with pytest.raises(urllib.error.HTTPError) as e:
