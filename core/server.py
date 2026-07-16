@@ -5,6 +5,7 @@ import json
 import os
 import secrets
 import shutil
+import sqlite3
 import subprocess
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -249,7 +250,13 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
             except ValueError as exc:
                 return self._send(400, {"error": str(exc)})
 
-            old_data_dir = settings.load()["data_dir"]
+            old_db_path = getattr(state["store"], "_path", None)
+            if old_db_path is not None:
+                old_db_path = Path(old_db_path)
+                old_data_dir = str(old_db_path.parent)
+            else:
+                old_data_dir = settings.load()["data_dir"]
+                old_db_path = Path(old_data_dir).expanduser() / "kairos.db"
             new_data_dir = patch.get("data_dir")
             dir_changed = (
                 new_data_dir is not None
@@ -262,20 +269,27 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
                     new_dir.mkdir(parents=True, exist_ok=True)
                 except OSError as exc:
                     return self._send(400, {"error": f"cannot create data_dir: {exc}"})
-                old_db = Path(old_data_dir).expanduser() / "kairos.db"
+                old_db = old_db_path
                 new_db = new_dir / "kairos.db"
                 if old_db.exists() and not new_db.exists():
                     try:
                         shutil.copy2(old_db, new_db)
                     except OSError as exc:
                         return self._send(400, {"error": f"cannot copy db: {exc}"})
+
+            prior_settings = settings.load()
             try:
                 merged = settings.save(patch)
             except ValueError as exc:
                 return self._send(400, {"error": str(exc)})
             if dir_changed:
                 new_dir = Path(new_data_dir).expanduser()
-                state["store"] = Store(new_dir / "kairos.db")
+                try:
+                    state["store"] = Store(new_dir / "kairos.db")
+                except (OSError, sqlite3.Error) as exc:
+                    settings.save({"data_dir": prior_settings["data_dir"]})
+                    return self._send(400, {"error": f"cannot open store: {exc}"})
+                os.environ.pop("KAIROS_STORE_FALLBACK", None)
             return self._send(200, merged)
 
         def _chat(self, body: dict):

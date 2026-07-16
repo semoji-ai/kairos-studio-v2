@@ -37,23 +37,37 @@ def _validate(patch: dict) -> None:
         raise ValueError("data_dir must be str")
 
 
+def _load_raw() -> dict:
+    """settings.json 파일 내용 그대로 (기본값 미적용). 파일 없음/손상 시 {}."""
+    p = config_path()
+    if not p.is_file():
+        return {}
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}  # 깨진 파일이면 기본값으로 동작 (기록은 다음 save가 복구)
+    return data if isinstance(data, dict) else {}
+
+
 def load() -> dict:
     merged = dict(DEFAULTS)
-    p = config_path()
-    if p.is_file():
-        try:
-            merged.update(json.loads(p.read_text(encoding="utf-8")))
-        except (json.JSONDecodeError, OSError):
-            pass  # 깨진 파일이면 기본값으로 동작 (기록은 다음 save가 복구)
+    merged.update(_load_raw())
     return merged
+
+
+def explicit_keys() -> set[str]:
+    """settings.json 파일에 실제로 기록된 키 집합 (파일 없음/손상 시 빈 집합)."""
+    return set(_load_raw().keys())
 
 
 def save(patch: dict) -> dict:
     _validate(patch)
-    merged = load()
-    merged.update(patch)
+    raw = _load_raw()
+    raw.update(patch)
     p = config_path()
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(merged, ensure_ascii=False, indent=2),
+    p.write_text(json.dumps(raw, ensure_ascii=False, indent=2),
                  encoding="utf-8")
+    merged = dict(DEFAULTS)
+    merged.update(raw)
     return merged

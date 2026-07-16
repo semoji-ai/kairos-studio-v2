@@ -41,3 +41,10 @@ def test_whitelist_rejects_bad_values():
 def test_unknown_keys_preserved(cfg_dir):
     settings.save({"future_key": {"nested": 1}})
     assert settings.load()["future_key"] == {"nested": 1}
+
+
+def test_explicit_keys(cfg_dir):
+    assert settings.explicit_keys() == set()
+    settings.save({"default_provider": "codex"})
+    assert "default_provider" in settings.explicit_keys()
+    assert "codex_sandbox" not in settings.explicit_keys()

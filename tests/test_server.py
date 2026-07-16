@@ -182,3 +182,25 @@ def test_cli_status_with_fakes(srv):
     assert st["claude"]["installed"] is True   # KAIROS_CLAUDE_CMD 세팅됨
     assert st["codex"]["installed"] is True
     assert st["claude"]["login_hint"]
+
+
+def test_put_data_dir_copies_from_live_store_not_settings(srv, tmp_path, monkeypatch):
+    # env KAIROS_DATA_DIR가 설정과 다른 곳을 가리키는 Tauri 시나리오:
+    # 복사 원본은 설정값이 아니라 '살아있는 store'의 DB여야 한다
+    url, store = srv
+    done = _sse_events(_req(url, "/chat", {"text": "타우리 대화"}))[-1]
+    new_dir = tmp_path / "tauri_moved"
+    json.load(_req(url, "/settings", {"data_dir": str(new_dir)}, method="PUT"))
+    msgs = json.load(_req(url, f"/messages?session_id={done['session_id']}"))["messages"]
+    assert len(msgs) == 2  # 이관 후에도 기존 대화 보임 = 올바른 원본에서 복사됨
+
+
+def test_put_data_dir_store_open_failure_rolls_back(srv, tmp_path, monkeypatch):
+    url, _ = srv
+    before = json.load(_req(url, "/settings"))["data_dir"]
+    # 파일을 만들어 그 '아래' 경로를 지정 → mkdir 실패 → 400
+    blocker = tmp_path / "blocker"; blocker.write_text("x")
+    with pytest.raises(urllib.error.HTTPError) as e:
+        _req(url, "/settings", {"data_dir": str(blocker / "sub")}, method="PUT")
+    assert e.value.code == 400
+    assert json.load(_req(url, "/settings"))["data_dir"] == before

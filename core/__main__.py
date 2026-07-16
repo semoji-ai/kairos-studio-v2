@@ -20,12 +20,17 @@ def _default_data_dir() -> Path:
 
 
 def _data_dir() -> Path:
-    # env KAIROS_DATA_DIR은 설정보다 우선(테스트·Tauri 경로 호환)
+    # settings.json에 명시적으로 저장된 data_dir > env KAIROS_DATA_DIR > 기본값.
+    # (Tauri는 항상 env KAIROS_DATA_DIR=app_data_dir을 넘기므로, 사용자가 설정 UI에서
+    # 저장한 값이 재시작 후에도 유지되려면 명시적 설정이 env보다 우선해야 한다.)
+    if "data_dir" in settings.explicit_keys():
+        cfg_dir = settings.load().get("data_dir")
+        if cfg_dir:
+            return Path(cfg_dir).expanduser()
     d = os.environ.get("KAIROS_DATA_DIR")
     if d:
         return Path(d).expanduser()
-    cfg_dir = settings.load().get("data_dir")
-    return Path(cfg_dir).expanduser() if cfg_dir else _default_data_dir()
+    return _default_data_dir()
 
 
 def build(argv=None):

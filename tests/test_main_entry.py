@@ -35,3 +35,18 @@ def test_stdin_watchdog_exits_on_parent_death(tmp_path):
     while proc.poll() is None and time.time() < deadline:
         time.sleep(0.05)
     assert proc.poll() is not None, "sidecar must exit on stdin EOF"
+
+
+def test_settings_explicit_data_dir_beats_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("KAIROS_CONFIG_DIR", str(tmp_path / "cfg"))
+    monkeypatch.setenv("KAIROS_DATA_DIR", str(tmp_path / "env_dir"))
+    monkeypatch.setenv("PORT", "0")
+    from core import settings
+    chosen = tmp_path / "chosen"
+    settings.save({"data_dir": str(chosen)})
+    from core.__main__ import build
+    server, info = build()
+    try:
+        assert (chosen / "kairos.db").exists()
+    finally:
+        server.server_close()
