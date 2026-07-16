@@ -244,9 +244,19 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
             return self._send(404, {"error": "not found"})
 
         def _put_settings(self, patch: dict):
+            try:
+                settings._validate(patch)
+            except ValueError as exc:
+                return self._send(400, {"error": str(exc)})
+
             old_data_dir = settings.load()["data_dir"]
             new_data_dir = patch.get("data_dir")
-            if new_data_dir is not None and isinstance(new_data_dir, str):
+            dir_changed = (
+                new_data_dir is not None
+                and isinstance(new_data_dir, str)
+                and Path(new_data_dir).expanduser() != Path(old_data_dir).expanduser()
+            )
+            if dir_changed:
                 new_dir = Path(new_data_dir).expanduser()
                 try:
                     new_dir.mkdir(parents=True, exist_ok=True)
@@ -263,7 +273,7 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
                 merged = settings.save(patch)
             except ValueError as exc:
                 return self._send(400, {"error": str(exc)})
-            if new_data_dir is not None and isinstance(new_data_dir, str):
+            if dir_changed:
                 new_dir = Path(new_data_dir).expanduser()
                 state["store"] = Store(new_dir / "kairos.db")
             return self._send(200, merged)

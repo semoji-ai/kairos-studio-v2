@@ -148,6 +148,18 @@ def test_settings_reject_bad_value(srv):
     assert json.load(_req(url, "/settings"))["codex_sandbox"] == "read-only"
 
 
+def test_settings_combined_invalid_patch_has_no_side_effects(srv, tmp_path):
+    url, _ = srv
+    target = tmp_path / "should_not_exist"
+    with pytest.raises(urllib.error.HTTPError) as e:
+        _req(url, "/settings",
+             {"data_dir": str(target), "codex_sandbox": "danger-full-access"},
+             method="PUT")
+    assert e.value.code == 400
+    assert not target.exists()          # mkdir/copy가 실행되지 않았어야 한다
+    assert json.load(_req(url, "/settings"))["codex_sandbox"] == "read-only"
+
+
 def test_data_dir_change_copies_db_and_reopens(srv, tmp_path):
     url, store = srv
     done = _sse_events(_req(url, "/chat", {"text": "첫 대화"}))[-1]
