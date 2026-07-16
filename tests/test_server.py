@@ -102,3 +102,12 @@ def test_sessions_and_messages_endpoints(srv):
     assert sessions[0]["id"] == done["session_id"]
     msgs = json.load(_req(url, f"/messages?session_id={done['session_id']}"))["messages"]
     assert len(msgs) == 2
+
+
+def test_static_serves_index_with_token(srv, tmp_path, monkeypatch):
+    url, _ = srv
+    # KAIROS_STATIC_DIR을 가짜 dist로
+    (tmp_path / "index.html").write_text("<html><head></head><body>hi</body></html>")
+    monkeypatch.setenv("KAIROS_STATIC_DIR", str(tmp_path))
+    html = urllib.request.urlopen(url + "/").read().decode()
+    assert "window.__KAIROS__" in html and TOKEN in html

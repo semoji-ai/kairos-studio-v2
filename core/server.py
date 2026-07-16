@@ -89,7 +89,45 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
                 except ValueError:
                     return self._send(400, {"error": "bad session_id"})
                 return self._send(200, {"messages": store.list_messages(sid)})
-            return self._send(404, {"error": "not found"})
+            return self._serve_static()
+
+        _CTYPES = {".html": "text/html", ".js": "text/javascript",
+                   ".css": "text/css", ".svg": "image/svg+xml",
+                   ".png": "image/png", ".ico": "image/x-icon"}
+
+        def _static_root(self):
+            import os
+            from pathlib import Path
+            d = os.environ.get("KAIROS_STATIC_DIR")
+            if d:
+                return Path(d).expanduser().resolve()
+            return (Path(__file__).resolve().parent.parent / "app" / "dist").resolve()
+
+        def _serve_static(self):
+            root = self._static_root()
+            rel = self.path.split("?", 1)[0].lstrip("/")
+            target = (root / rel) if rel else (root / "index.html")
+            target = target.resolve()
+            try:
+                target.relative_to(root)
+            except ValueError:
+                return self._send(404, {"error": "not found"})
+            if not target.is_file():
+                target = root / "index.html"   # SPA 폴백
+                if not target.is_file():
+                    return self._send(404, {"error": "spa not built"})
+            data = target.read_bytes()
+            if target.name == "index.html":
+                token_js = ('<script>window.__KAIROS__ = '
+                            + json.dumps({"token": token}).replace("<", "\\u003c")
+                            + ';</script>')
+                data = data.decode("utf-8").replace("</head>", token_js + "</head>", 1).encode("utf-8")
+            ctype = self._CTYPES.get(target.suffix.lower(), "application/octet-stream")
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
 
         def do_POST(self):
             if not self._authed():
