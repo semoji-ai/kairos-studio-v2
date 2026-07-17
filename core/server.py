@@ -277,7 +277,7 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
                     except OSError as exc:
                         return self._send(400, {"error": f"cannot copy db: {exc}"})
 
-            prior_settings = settings.load()
+            raw_before = settings._load_raw()
             try:
                 merged = settings.save(patch)
             except ValueError as exc:
@@ -287,7 +287,7 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
                 try:
                     state["store"] = Store(new_dir / "kairos.db")
                 except (OSError, sqlite3.Error) as exc:
-                    settings.save({"data_dir": prior_settings["data_dir"]})
+                    settings.restore_raw(raw_before)
                     return self._send(400, {"error": f"cannot open store: {exc}"})
                 os.environ.pop("KAIROS_STORE_FALLBACK", None)
             return self._send(200, merged)

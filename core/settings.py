@@ -49,6 +49,14 @@ def _load_raw() -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def restore_raw(raw: dict) -> None:
+    """settings.json 파일을 raw로 그대로 덮어씀 (기본값 병합 없음). 롤백용."""
+    p = config_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(raw, ensure_ascii=False, indent=2),
+                 encoding="utf-8")
+
+
 def load() -> dict:
     merged = dict(DEFAULTS)
     merged.update(_load_raw())

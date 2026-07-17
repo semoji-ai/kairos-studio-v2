@@ -195,7 +195,7 @@ def test_put_data_dir_copies_from_live_store_not_settings(srv, tmp_path, monkeyp
     assert len(msgs) == 2  # 이관 후에도 기존 대화 보임 = 올바른 원본에서 복사됨
 
 
-def test_put_data_dir_store_open_failure_rolls_back(srv, tmp_path, monkeypatch):
+def test_put_data_dir_mkdir_failure_rolls_back(srv, tmp_path, monkeypatch):
     url, _ = srv
     before = json.load(_req(url, "/settings"))["data_dir"]
     # 파일을 만들어 그 '아래' 경로를 지정 → mkdir 실패 → 400
@@ -204,3 +204,19 @@ def test_put_data_dir_store_open_failure_rolls_back(srv, tmp_path, monkeypatch):
         _req(url, "/settings", {"data_dir": str(blocker / "sub")}, method="PUT")
     assert e.value.code == 400
     assert json.load(_req(url, "/settings"))["data_dir"] == before
+
+
+def test_put_data_dir_store_open_failure_rolls_back(srv, tmp_path, monkeypatch):
+    import core.settings as settings
+
+    url, _ = srv
+    before = json.load(_req(url, "/settings"))["data_dir"]
+    # target dir이 이미 존재하고, 그 안의 'kairos.db'가 파일이 아니라 디렉토리라서
+    # mkdir은 성공하고 copy는 건너뛰지만(target "exists") sqlite3.connect가 실패한다.
+    target = tmp_path / "bad_store_target"
+    (target / "kairos.db").mkdir(parents=True)
+    with pytest.raises(urllib.error.HTTPError) as e:
+        _req(url, "/settings", {"data_dir": str(target)}, method="PUT")
+    assert e.value.code == 400
+    assert json.load(_req(url, "/settings"))["data_dir"] == before
+    assert "data_dir" not in settings.explicit_keys()
