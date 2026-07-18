@@ -139,7 +139,8 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
                 return self._send(200, {"ok": True})
             # 인증은 API 라우트에만. 그 외 경로는 Task 8에서 정적 서빙이 된다
             # (토큰이 index.html 주입으로 전달되므로 정적은 인증 불가/불요).
-            if u.path in ("/sessions", "/messages", "/settings", "/storage", "/cli/status"):
+            if u.path in ("/sessions", "/messages", "/settings", "/storage", "/cli/status",
+                          "/workspace/info"):
                 if not self._authed():
                     return self._send(401, {"error": "unauthorized"})
                 if u.path == "/sessions":
@@ -158,7 +159,33 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
                 if u.path == "/cli/status":
                     return self._send(200, {"claude": _cli_status_one("claude"),
                                              "codex": _cli_status_one("codex")})
+                if u.path == "/workspace/info":
+                    return self._workspace_info()
             return self._serve_static()
+
+        def _workspace_info(self):
+            ws_str = settings.load()["workspace_dir"]
+            if ws_str is None:
+                return self._send(200, {"workspace_dir": None, "exists": None,
+                                         "skills": [], "has_claude_md": False})
+            ws = Path(ws_str).expanduser()
+            exists = ws.is_dir()
+            skills: set[str] = set()
+            if exists:
+                claude_skills = ws / ".claude" / "skills"
+                if claude_skills.is_dir():
+                    for d in claude_skills.iterdir():
+                        if d.is_dir():
+                            skills.add(d.name)
+                plain_skills = ws / "skills"
+                if plain_skills.is_dir():
+                    for d in plain_skills.iterdir():
+                        if d.is_dir() and (d / "SKILL.md").is_file():
+                            skills.add(d.name)
+            has_claude_md = exists and (ws / "CLAUDE.md").is_file()
+            return self._send(200, {"workspace_dir": ws_str, "exists": exists,
+                                     "skills": sorted(skills),
+                                     "has_claude_md": has_claude_md})
 
         def _storage(self):
             db_path = getattr(state["store"], "_path", None)

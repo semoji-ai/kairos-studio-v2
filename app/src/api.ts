@@ -44,6 +44,11 @@ export type Settings = {
   routing_rules_enabled: boolean;
   codex_sandbox: "read-only" | "workspace-write";
   claude_permission_mode: "default" | "acceptEdits";
+  workspace_dir: string | null;
+};
+export type WorkspaceInfo = {
+  workspace_dir: string | null; exists: boolean | null;
+  skills: string[]; has_claude_md: boolean;
 };
 export type CliStatus = Record<string, {
   installed: boolean; version: string | null;
@@ -64,6 +69,9 @@ export async function cliStatus(): Promise<CliStatus> {
 }
 export async function storageInfo(): Promise<StorageInfo> {
   return (await fetch("/storage", { headers: HDRS })).json();
+}
+export async function workspaceInfo(): Promise<WorkspaceInfo> {
+  return (await fetch("/workspace/info", { headers: HDRS })).json();
 }
 
 /** POST /chat 후 SSE 스트림을 콜백으로 흘린다. done/error에서 종료. */

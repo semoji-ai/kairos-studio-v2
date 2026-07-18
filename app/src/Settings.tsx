@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { cliStatus, getSettings, putSettings, storageInfo } from "./api";
-import type { CliStatus, Settings as SettingsType, StorageInfo } from "./api";
+import { cliStatus, getSettings, putSettings, storageInfo, workspaceInfo } from "./api";
+import type { CliStatus, Settings as SettingsType, StorageInfo, WorkspaceInfo } from "./api";
 
 function badge(installed: boolean, authed: boolean | null): string {
   if (!installed) return "❌";
@@ -12,14 +12,21 @@ export default function Settings({ onClose }: { onClose: () => void }) {
   const [settings, setSettings] = useState<SettingsType | null>(null);
   const [cli, setCli] = useState<CliStatus | null>(null);
   const [storage, setStorage] = useState<StorageInfo | null>(null);
+  const [workspace, setWorkspace] = useState<WorkspaceInfo | null>(null);
   const [dataDirInput, setDataDirInput] = useState("");
+  const [workspaceDirInput, setWorkspaceDirInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    getSettings().then(s => { setSettings(s); setDataDirInput(s.data_dir); });
+    getSettings().then(s => {
+      setSettings(s);
+      setDataDirInput(s.data_dir);
+      setWorkspaceDirInput(s.workspace_dir ?? "");
+    });
     cliStatus().then(setCli);
     storageInfo().then(setStorage);
+    workspaceInfo().then(setWorkspace);
   }, []);
 
   async function save(patch: Partial<SettingsType>) {
@@ -30,6 +37,9 @@ export default function Settings({ onClose }: { onClose: () => void }) {
       const s = await storageInfo();
       setStorage(s);
       setDataDirInput(updated.data_dir);
+      setWorkspaceDirInput(updated.workspace_dir ?? "");
+      const w = await workspaceInfo();
+      setWorkspace(w);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -91,6 +101,25 @@ export default function Settings({ onClose }: { onClose: () => void }) {
           <button style={{ marginLeft: 8 }} disabled={saving}
                   onClick={() => save({ data_dir: dataDirInput })}>저장</button>
         </div>
+
+        <div style={{ marginTop: 16 }}>작업 폴더</div>
+        <div style={{ marginTop: 8 }}>
+          <input value={workspaceDirInput} onChange={e => setWorkspaceDirInput(e.target.value)}
+                 placeholder="(미설정)" style={{ width: 300 }} />
+          <button style={{ marginLeft: 8 }} disabled={saving}
+                  onClick={() => save({ workspace_dir: workspaceDirInput.trim() === "" ? null : workspaceDirInput })}>저장</button>
+        </div>
+        {workspace && workspace.skills.length > 0 && (
+          <div style={{ marginTop: 8, fontSize: 12 }}>
+            스킬 {workspace.skills.length}개 감지: {workspace.skills.slice(0, 8).join(", ")}
+            {workspace.skills.length > 8 ? "…" : ""}
+          </div>
+        )}
+        {workspace?.workspace_dir && settings?.claude_permission_mode === "default" && (
+          <div style={{ background: "#fef3c7", color: "#92400e", padding: 8, borderRadius: 4, marginTop: 8, fontSize: 12 }}>
+            스킬이 파일을 쓰려면 권한을 acceptEdits / workspace-write로 올리는 것을 권장합니다
+          </div>
+        )}
       </section>
 
       <section style={{ margin: "16px 0" }}>

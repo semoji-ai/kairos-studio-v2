@@ -220,3 +220,29 @@ def test_put_data_dir_store_open_failure_rolls_back(srv, tmp_path, monkeypatch):
     assert e.value.code == 400
     assert json.load(_req(url, "/settings"))["data_dir"] == before
     assert "data_dir" not in settings.explicit_keys()
+
+
+def test_workspace_info_null_by_default(srv):
+    url, _ = srv
+    info = json.load(_req(url, "/workspace/info"))
+    assert info["workspace_dir"] is None and info["skills"] == []
+
+
+def test_workspace_info_lists_skills(srv, tmp_path):
+    url, _ = srv
+    ws = tmp_path / "ws"
+    (ws / "skills" / "publish-write").mkdir(parents=True)
+    (ws / "skills" / "publish-write" / "SKILL.md").write_text("x")
+    (ws / ".claude" / "skills" / "local-skill").mkdir(parents=True)
+    (ws / "CLAUDE.md").write_text("x")
+    json.load(_req(url, "/settings", {"workspace_dir": str(ws)}, method="PUT"))
+    info = json.load(_req(url, "/workspace/info"))
+    assert info["exists"] is True and info["has_claude_md"] is True
+    assert "publish-write" in info["skills"] and "local-skill" in info["skills"]
+
+
+def test_workspace_dir_bad_path_400(srv, tmp_path):
+    url, _ = srv
+    with pytest.raises(urllib.error.HTTPError) as e:
+        _req(url, "/settings", {"workspace_dir": str(tmp_path / "nope")}, method="PUT")
+    assert e.value.code == 400
