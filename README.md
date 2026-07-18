@@ -75,3 +75,15 @@ watchdog에 의해 함께 정리되는지도 같이 확인 권장.
 `cargo tauri dev`로 연 실제 설정 화면(데이터 위치·기본 provider·라우팅 규칙 토글·권한 모드 선택 UI)에서의
 조작 확인은 이 세션에서 수행할 수 없어 보류. 사용자가 직접 설정 화면을 열어 위 5개 기준을 눈으로
 확인해야 한다.
+
+## P1.6 검증 로그 (2026-07-18)
+
+작업 폴더(workspace) 연결 — publish_agent 통합 headless 실측:
+
+| 기준 | 결과 |
+|---|---|
+| 워크스페이스 지정(존재 검증) | ✅ PUT /settings workspace_dir=~/LocalProjects/publish_agent 저장됨 |
+| 스킬 감지 | ✅ /workspace/info → publish-* 10개 + CLAUDE.md 감지 |
+| 미존재 경로 거부 | ✅ /nope/nope → 400, 설정 유지 |
+| CLI cwd 반영 | ✅ fake_cwd_dump 응답 = /Users/.../publish_agent (SQLite 기록 확인) |
+| 설정 UI(작업 폴더·스킬 안내·권한 권장) | 사용자 수동 확인 대기 |
