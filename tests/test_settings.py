@@ -48,3 +48,12 @@ def test_explicit_keys(cfg_dir):
     settings.save({"default_provider": "codex"})
     assert "default_provider" in settings.explicit_keys()
     assert "codex_sandbox" not in settings.explicit_keys()
+
+
+def test_workspace_dir_validation(tmp_path):
+    settings.save({"workspace_dir": None})              # null 허용
+    settings.save({"workspace_dir": str(tmp_path)})     # 존재하는 dir 허용
+    with pytest.raises(ValueError):
+        settings.save({"workspace_dir": str(tmp_path / "nope")})
+    with pytest.raises(ValueError):
+        settings.save({"workspace_dir": 123})

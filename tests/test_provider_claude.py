@@ -4,6 +4,7 @@ import json as _json
 
 FAKE = Path(__file__).parent / "fakes" / "fake_claude.py"
 FAKE_ARGV = Path(__file__).parent / "fakes" / "fake_argv_dump.py"
+FAKE_CWD = Path(__file__).parent / "fakes" / "fake_cwd_dump.py"
 
 
 def _events(monkeypatch, prompt, session_ref=None, cfg=None):
@@ -49,3 +50,17 @@ def test_permission_mode_default_without_cfg(monkeypatch):
     done = list(claude.chat("hi"))[-1]
     argv = _json.loads(done["text"])
     assert argv[argv.index("--permission-mode") + 1] == "default"
+
+
+def test_workspace_dir_sets_cwd(monkeypatch, tmp_path):
+    monkeypatch.setenv("KAIROS_CLAUDE_CMD", f"{sys.executable} {FAKE_CWD}")
+    from core.providers import claude
+    done = list(claude.chat("hi", cfg={"workspace_dir": str(tmp_path)}))[-1]
+    assert Path(done["text"]).resolve() == tmp_path.resolve()
+
+
+def test_no_workspace_dir_keeps_default_cwd(monkeypatch, tmp_path):
+    monkeypatch.setenv("KAIROS_CLAUDE_CMD", f"{sys.executable} {FAKE_CWD}")
+    from core.providers import claude
+    done = list(claude.chat("hi"))[-1]
+    assert Path(done["text"]).resolve() != tmp_path.resolve()

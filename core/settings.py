@@ -11,6 +11,7 @@ DEFAULTS = {
     "routing_rules_enabled": True,
     "codex_sandbox": "read-only",
     "claude_permission_mode": "default",
+    "workspace_dir": None,
 }
 
 _ALLOWED = {
@@ -35,6 +36,13 @@ def _validate(patch: dict) -> None:
         raise ValueError("routing_rules_enabled must be bool")
     if "data_dir" in patch and not isinstance(patch["data_dir"], str):
         raise ValueError("data_dir must be str")
+    if "workspace_dir" in patch:
+        v = patch["workspace_dir"]
+        if v is not None:
+            if not isinstance(v, str):
+                raise ValueError("workspace_dir must be str or None")
+            if not Path(v).expanduser().is_dir():
+                raise ValueError("workspace_dir does not exist")
 
 
 def _load_raw() -> dict:

@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import subprocess
+from pathlib import Path
 from typing import Iterator
 
 
@@ -32,11 +33,17 @@ def chat(prompt: str, session_ref: str | None = None,
     ]
     if session_ref:
         cmd += ["--resume", session_ref]
+    ws = (cfg or {}).get("workspace_dir")
+    popen_kwargs = {
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+        "encoding": "utf-8",
+        "errors": "replace",  # Windows cp949 함정 방지
+    }
+    if ws:
+        popen_kwargs["cwd"] = str(Path(ws).expanduser())
     try:
-        proc = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            encoding="utf-8", errors="replace",  # Windows cp949 함정 방지
-        )
+        proc = subprocess.Popen(cmd, **popen_kwargs)
     except OSError as exc:
         yield {"type": "error", "error": f"spawn failed: {exc}"}
         return
