@@ -7,16 +7,20 @@ import secrets
 import shutil
 import sqlite3
 import subprocess
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from core import providers, settings
+from core.distill import distill
 from core.recall import recall
 from core.router import route
 from core.store import Store
 
 _INJECT_BUDGET = 1500
+DISTILL_THRESHOLD = 10
+_distill_lock = threading.Lock()
 
 
 def build_prompt(text: str, rec: dict) -> tuple[str, int]:
@@ -30,9 +34,13 @@ def build_prompt(text: str, rec: dict) -> tuple[str, int]:
     snippets = list(rec.get("snippets") or [])
     avoid = list(rec.get("avoid") or [])
     corrections = list(rec.get("corrections") or [])
+    rules = list(rec.get("rules") or [])
 
-    def render_block(snips: list[dict]) -> str:
+    def render_block(snips: list[dict], rls: list[str]) -> str:
         blocks = []
+        if rls:
+            lines = "\n".join(f"- {r}" for r in rls)
+            blocks.append(f"[학습된 규칙 — 항상 준수]\n{lines}")
         if snips:
             lines = "\n".join(
                 f"({s.get('date', '')}) Q: {s.get('q_text', '')} A: {s.get('a_text', '')}"
@@ -49,10 +57,15 @@ def build_prompt(text: str, rec: dict) -> tuple[str, int]:
             return ""
         return "\n\n".join(blocks)
 
-    block = render_block(snippets)
+    block = render_block(snippets, rules)
     while block and len(block) > _INJECT_BUDGET and snippets:
         snippets = snippets[:-1]
-        block = render_block(snippets)
+        block = render_block(snippets, rules)
+    # 스니펫을 다 줄여도 여전히 캡 초과면 규칙을 오래된 것부터(리스트 끝) 줄인다.
+    # store.list_rules()는 id 내림차순(최신 우선)이므로 끝을 자르면 최신이 남는다.
+    while block and len(block) > _INJECT_BUDGET and rules:
+        rules = rules[:-1]
+        block = render_block(snippets, rules)
 
     if not block:
         return text, 0
@@ -184,9 +197,13 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
             # 인증은 API 라우트에만. 그 외 경로는 Task 8에서 정적 서빙이 된다
             # (토큰이 index.html 주입으로 전달되므로 정적은 인증 불가/불요).
             if u.path in ("/sessions", "/messages", "/settings", "/storage", "/cli/status",
-                          "/workspace/info"):
+                          "/workspace/info", "/rules"):
                 if not self._authed():
                     return self._send(401, {"error": "unauthorized"})
+                if u.path == "/rules":
+                    store = state["store"]
+                    return self._send(200, {"rules": store.list_rules(active_only=False),
+                                             "undistilled": store.count_undistilled_feedback()})
                 if u.path == "/sessions":
                     return self._send(200, {"sessions": state["store"].list_sessions()})
                 if u.path == "/messages":
@@ -301,7 +318,29 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
                 return self._send(200, {"id": fid})
             if self.path == "/chat":
                 return self._chat(body)
+            if self.path == "/rules":
+                return self._set_rule_active(body)
+            if self.path == "/distill":
+                return self._distill()
             return self._send(404, {"error": "not found"})
+
+        def _set_rule_active(self, body: dict):
+            try:
+                rule_id = int(body["id"])
+                active = bool(body["active"])
+            except (KeyError, TypeError, ValueError) as exc:
+                return self._send(400, {"error": str(exc)})
+            state["store"].set_rule_active(rule_id, active)
+            return self._send(200, {"ok": True})
+
+        def _distill(self):
+            if not _distill_lock.acquire(blocking=False):
+                return self._send(409, {"error": "distill already running"})
+            try:
+                result = distill(state["store"], providers.get("claude").chat, settings.load())
+            finally:
+                _distill_lock.release()
+            return self._send(200, result)
 
         def do_PUT(self):
             if not self._host_ok():
@@ -379,6 +418,8 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
 
             if cfg.get("learning_recall_enabled", True):
                 rec = recall(store, text, session_id)
+                rec["rules"] = [r["rule"].replace("\n", " ").strip()
+                                for r in store.list_rules(active_only=True)]
                 prompt, n_recalled = build_prompt(cleaned, rec)
             else:
                 prompt, n_recalled = cleaned, 0
@@ -407,5 +448,18 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
             self._sse({"type": "done", "message_id": mid,
                        "session_id": session_id, "provider": provider_name,
                        "recalled": n_recalled})
+
+            if (cfg.get("learning_recall_enabled", True)
+                    and store.count_undistilled_feedback() >= DISTILL_THRESHOLD):
+                def _auto_distill():
+                    if not _distill_lock.acquire(blocking=False):
+                        return
+                    try:
+                        distill(store, providers.get("claude").chat, cfg)
+                    except Exception:
+                        pass
+                    finally:
+                        _distill_lock.release()
+                threading.Thread(target=_auto_distill, daemon=True).start()
 
     return ThreadingHTTPServer((host, port), Handler)

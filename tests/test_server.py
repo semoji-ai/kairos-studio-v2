@@ -290,6 +290,73 @@ def test_build_prompt_cap_ignores_user_text_length():
     assert "[과거 대화 참고" in prompt and prompt.endswith(long_text)
 
 
+def test_distill_route_adds_rule(srv, monkeypatch):
+    url, store = srv
+    done = _sse_events(_req(url, "/chat", {"text": "안녕"}))[-1]
+    _req(url, "/feedback", {"message_id": done["message_id"], "kind": "correction",
+                             "payload": "가운뎃점 대신 쉼표"})
+    monkeypatch.setenv("KAIROS_CLAUDE_CMD",
+                       f"{sys.executable} {FAKES/'fake_distill_claude.py'}")
+    result = json.load(_req(url, "/distill", {}))
+    assert result["added"] == ["가운뎃점 대신 쉼표를 쓴다"]
+    rules = json.load(_req(url, "/rules"))["rules"]
+    assert len(rules) == 1 and rules[0]["rule"] == "가운뎃점 대신 쉼표를 쓴다"
+
+
+def test_chat_injects_learned_rules(srv, monkeypatch):
+    url, store = srv
+    done = _sse_events(_req(url, "/chat", {"text": "안녕"}))[-1]
+    _req(url, "/feedback", {"message_id": done["message_id"], "kind": "correction",
+                             "payload": "가운뎃점 대신 쉼표"})
+    monkeypatch.setenv("KAIROS_CLAUDE_CMD",
+                       f"{sys.executable} {FAKES/'fake_distill_claude.py'}")
+    json.load(_req(url, "/distill", {}))
+    monkeypatch.setenv("KAIROS_CLAUDE_CMD",
+                       f"{sys.executable} {FAKES/'fake_argv_dump.py'}")
+    done2 = _sse_events(_req(url, "/chat", {"text": "@claude 다시 물어봄"}))[-1]
+    msgs = json.load(_req(url, f"/messages?session_id={done2['session_id']}"))["messages"]
+    argv_text = msgs[-1]["content"][0]["text"]
+    assert "[학습된 규칙" in argv_text
+
+
+def test_rules_deactivate_excludes_from_injection(srv, monkeypatch):
+    url, store = srv
+    done = _sse_events(_req(url, "/chat", {"text": "안녕"}))[-1]
+    _req(url, "/feedback", {"message_id": done["message_id"], "kind": "correction",
+                             "payload": "가운뎃점 대신 쉼표"})
+    monkeypatch.setenv("KAIROS_CLAUDE_CMD",
+                       f"{sys.executable} {FAKES/'fake_distill_claude.py'}")
+    json.load(_req(url, "/distill", {}))
+    rule_id = json.load(_req(url, "/rules"))["rules"][0]["id"]
+    _req(url, "/rules", {"id": rule_id, "active": False})
+    monkeypatch.setenv("KAIROS_CLAUDE_CMD",
+                       f"{sys.executable} {FAKES/'fake_argv_dump.py'}")
+    done2 = _sse_events(_req(url, "/chat", {"text": "@claude 다시 물어봄"}))[-1]
+    msgs = json.load(_req(url, f"/messages?session_id={done2['session_id']}"))["messages"]
+    argv_text = msgs[-1]["content"][0]["text"]
+    assert "[학습된 규칙" not in argv_text
+
+
+def test_chat_auto_triggers_distill_at_threshold(srv, monkeypatch):
+    import time
+    import core.server as server_mod
+    monkeypatch.setattr(server_mod, "DISTILL_THRESHOLD", 2)
+    url, store = srv
+    d1 = _sse_events(_req(url, "/chat", {"text": "안녕"}))[-1]
+    _req(url, "/feedback", {"message_id": d1["message_id"], "kind": "correction",
+                             "payload": "교정1"})
+    d2 = _sse_events(_req(url, "/chat", {"text": "안녕2"}))[-1]
+    _req(url, "/feedback", {"message_id": d2["message_id"], "kind": "correction",
+                             "payload": "교정2"})
+    monkeypatch.setenv("KAIROS_CLAUDE_CMD",
+                       f"{sys.executable} {FAKES/'fake_distill_claude.py'}")
+    _sse_events(_req(url, "/chat", {"text": "트리거"}))
+    deadline = time.time() + 3
+    while time.time() < deadline and store.count_undistilled_feedback() > 0:
+        time.sleep(0.05)
+    assert store.count_undistilled_feedback() == 0
+
+
 def test_build_prompt_trims_oversized_block():
     from core.server import build_prompt
     snips = [{"q_text": "질" * 400, "a_text": "답" * 400, "date": "2026-07-01", "score": 1.0}
