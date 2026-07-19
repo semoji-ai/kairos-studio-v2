@@ -24,13 +24,14 @@ def build_prompt(text: str, rec: dict) -> tuple[str, int]:
 
     반환: (프롬프트, 주입된 스니펫 수). 회상 결과가 전부 비어 있으면 (text, 0).
     1,500자 하드캡 초과 시 스니펫을 뒤에서부터 제거해 캡 이하로 맞춘다
-    (corrections/avoid는 우선 보존).
+    (corrections/avoid는 우선 보존). 캡은 주입 블록의 길이만 측정하며,
+    사용자 텍스트의 길이는 무시한다.
     """
     snippets = list(rec.get("snippets") or [])
     avoid = list(rec.get("avoid") or [])
     corrections = list(rec.get("corrections") or [])
 
-    def render(snips: list[dict]) -> str:
+    def render_block(snips: list[dict]) -> str:
         blocks = []
         if snips:
             lines = "\n".join(
@@ -46,15 +47,16 @@ def build_prompt(text: str, rec: dict) -> tuple[str, int]:
             blocks.append(f"[회피 신호 — 이런 식의 답변은 거부된 적 있음]\n{lines}")
         if not blocks:
             return ""
-        return "\n\n".join(blocks) + "\n\n---\n" + text
+        return "\n\n".join(blocks)
 
-    prompt = render(snippets)
-    while prompt and len(prompt) > _INJECT_BUDGET and snippets:
+    block = render_block(snippets)
+    while block and len(block) > _INJECT_BUDGET and snippets:
         snippets = snippets[:-1]
-        prompt = render(snippets)
+        block = render_block(snippets)
 
-    if not prompt:
+    if not block:
         return text, 0
+    prompt = block + "\n\n---\n" + text
     return prompt, len(snippets)
 
 

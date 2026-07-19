@@ -278,3 +278,22 @@ def test_recall_toggle_off(srv):
     json.load(_req(url, "/settings", {"learning_recall_enabled": False}, method="PUT"))
     done = _sse_events(_req(url, "/chat", {"text": "설교 이어서"}))[-1]
     assert done["recalled"] == 0
+
+
+def test_build_prompt_cap_ignores_user_text_length():
+    from core.server import build_prompt
+    rec = {"snippets": [{"q_text": "질문", "a_text": "답변", "date": "2026-07-01", "score": 1.0}],
+           "avoid": [], "corrections": []}
+    long_text = "가" * 3000
+    prompt, n = build_prompt(long_text, rec)
+    assert n == 1  # 사용자 텍스트가 길어도 스니펫이 잘리지 않는다
+    assert "[과거 대화 참고" in prompt and prompt.endswith(long_text)
+
+
+def test_build_prompt_trims_oversized_block():
+    from core.server import build_prompt
+    snips = [{"q_text": "질" * 400, "a_text": "답" * 400, "date": "2026-07-01", "score": 1.0}
+             for _ in range(5)]
+    rec = {"snippets": snips, "avoid": [], "corrections": []}
+    prompt, n = build_prompt("짧은 질문", rec)
+    assert n < 5  # 블록이 캡을 넘으면 스니펫이 줄어든다
