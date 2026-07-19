@@ -12,6 +12,7 @@ DEFAULTS = {
     "codex_sandbox": "read-only",
     "claude_permission_mode": "default",
     "workspace_dir": None,
+    "learning_recall_enabled": True,
 }
 
 _ALLOWED = {
@@ -36,6 +37,9 @@ def _validate(patch: dict) -> None:
         raise ValueError("routing_rules_enabled must be bool")
     if "data_dir" in patch and not isinstance(patch["data_dir"], str):
         raise ValueError("data_dir must be str")
+    if "learning_recall_enabled" in patch and not isinstance(
+            patch["learning_recall_enabled"], bool):
+        raise ValueError("learning_recall_enabled must be bool")
     if "workspace_dir" in patch:
         v = patch["workspace_dir"]
         if v is not None:

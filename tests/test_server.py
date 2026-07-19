@@ -246,3 +246,35 @@ def test_workspace_dir_bad_path_400(srv, tmp_path):
     with pytest.raises(urllib.error.HTTPError) as e:
         _req(url, "/settings", {"workspace_dir": str(tmp_path / "nope")}, method="PUT")
     assert e.value.code == 400
+
+
+def test_chat_injects_recall_from_past_session(srv):
+    url, store = srv
+    done1 = _sse_events(_req(url, "/chat", {"text": "설교 준비를 도와줘"}))[-1]
+    ev = _sse_events(_req(url, "/chat", {"text": "설교 이어서 하자"}))  # 새 세션
+    done2 = ev[-1]
+    assert done2["recalled"] >= 1
+    # fake_claude는 받은 prompt를 그대로 알 수 없으므로 fake_argv_dump로 재검:
+    # (아래 별도 테스트에서 argv 캡처로 주입 실증)
+
+
+def test_injection_reaches_provider_but_not_db(srv, tmp_path, monkeypatch):
+    url, store = srv
+    _sse_events(_req(url, "/chat", {"text": "레오파드 렌더 방법 알려줘"}))
+    monkeypatch.setenv("KAIROS_CLAUDE_CMD",
+                       f"{sys.executable} {FAKES/'fake_argv_dump.py'}")
+    done = _sse_events(_req(url, "/chat", {"text": "@claude 레오파드 얘기 다시"}))[-1]
+    msgs = json.load(_req(url, f"/messages?session_id={done['session_id']}"))["messages"]
+    # DB의 user 원문에는 주입 블록 없음
+    assert "[과거 대화 참고" not in msgs[0]["content"][0]["text"]
+    # provider가 받은 argv(-p 값)에는 주입 블록 있음
+    argv_text = msgs[1]["content"][0]["text"]
+    assert "[과거 대화 참고" in argv_text and "레오파드 얘기 다시" in argv_text
+
+
+def test_recall_toggle_off(srv):
+    url, _ = srv
+    _sse_events(_req(url, "/chat", {"text": "설교 준비를 도와줘"}))
+    json.load(_req(url, "/settings", {"learning_recall_enabled": False}, method="PUT"))
+    done = _sse_events(_req(url, "/chat", {"text": "설교 이어서"}))[-1]
+    assert done["recalled"] == 0

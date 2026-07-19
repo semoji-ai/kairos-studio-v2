@@ -12,8 +12,50 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from core import providers, settings
+from core.recall import recall
 from core.router import route
 from core.store import Store
+
+_INJECT_BUDGET = 1500
+
+
+def build_prompt(text: str, rec: dict) -> tuple[str, int]:
+    """스펙 ③ 형식으로 회상 결과를 원문 앞에 조립.
+
+    반환: (프롬프트, 주입된 스니펫 수). 회상 결과가 전부 비어 있으면 (text, 0).
+    1,500자 하드캡 초과 시 스니펫을 뒤에서부터 제거해 캡 이하로 맞춘다
+    (corrections/avoid는 우선 보존).
+    """
+    snippets = list(rec.get("snippets") or [])
+    avoid = list(rec.get("avoid") or [])
+    corrections = list(rec.get("corrections") or [])
+
+    def render(snips: list[dict]) -> str:
+        blocks = []
+        if snips:
+            lines = "\n".join(
+                f"({s.get('date', '')}) Q: {s.get('q_text', '')} A: {s.get('a_text', '')}"
+                for s in snips
+            )
+            blocks.append(f"[과거 대화 참고 — 관련 있을 때만 활용]\n{lines}")
+        if corrections:
+            lines = "\n".join(f"- {c}" for c in corrections)
+            blocks.append(f"[사용자 교정 이력 — 반드시 준수]\n{lines}")
+        if avoid:
+            lines = "\n".join(f"- {a}" for a in avoid)
+            blocks.append(f"[회피 신호 — 이런 식의 답변은 거부된 적 있음]\n{lines}")
+        if not blocks:
+            return ""
+        return "\n\n".join(blocks) + "\n\n---\n" + text
+
+    prompt = render(snippets)
+    while prompt and len(prompt) > _INJECT_BUDGET and snippets:
+        snippets = snippets[:-1]
+        prompt = render(snippets)
+
+    if not prompt:
+        return text, 0
+    return prompt, len(snippets)
 
 
 def _last_session_ref(store: Store, session_id: int, provider: str) -> str | None:
@@ -333,10 +375,16 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
             store.add_message(session_id, "user", [{"type": "text", "text": text}])
             session_ref = _last_session_ref(store, session_id, provider_name)
 
+            if cfg.get("learning_recall_enabled", True):
+                rec = recall(store, text, session_id)
+                prompt, n_recalled = build_prompt(cleaned, rec)
+            else:
+                prompt, n_recalled = cleaned, 0
+
             self._sse_start()
             final = None
             try:
-                for ev in providers.get(provider_name).chat(cleaned, session_ref=session_ref, cfg=cfg):
+                for ev in providers.get(provider_name).chat(prompt, session_ref=session_ref, cfg=cfg):
                     if ev["type"] == "delta":
                         self._sse(ev)
                     elif ev["type"] == "error":
@@ -355,6 +403,7 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
             mid = store.add_message(session_id, "assistant", content,
                                     provider=provider_name, model=final.get("model"))
             self._sse({"type": "done", "message_id": mid,
-                       "session_id": session_id, "provider": provider_name})
+                       "session_id": session_id, "provider": provider_name,
+                       "recalled": n_recalled})
 
     return ThreadingHTTPServer((host, port), Handler)

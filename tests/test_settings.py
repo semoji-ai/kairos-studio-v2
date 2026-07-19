@@ -57,3 +57,9 @@ def test_workspace_dir_validation(tmp_path):
         settings.save({"workspace_dir": str(tmp_path / "nope")})
     with pytest.raises(ValueError):
         settings.save({"workspace_dir": 123})
+
+
+def test_learning_recall_flag_validation():
+    settings.save({"learning_recall_enabled": False})
+    with pytest.raises(ValueError):
+        settings.save({"learning_recall_enabled": "yes"})

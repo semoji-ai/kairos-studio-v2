@@ -3,14 +3,14 @@ import json
 import sys
 
 def emit(o):
-    sys.stdout.write(json.dumps(o) + "\n")
+    sys.stdout.write(json.dumps(o, ensure_ascii=False) + "\n")
 
 argv = sys.argv[1:]
 if "exec" in argv:  # codex 모드
     emit({"type": "thread.started", "thread_id": "t"})
     emit({"type": "item.completed",
-          "item": {"type": "agent_message", "text": json.dumps(argv)}})
+          "item": {"type": "agent_message", "text": json.dumps(argv, ensure_ascii=False)}})
 else:  # claude 모드
     emit({"type": "system", "subtype": "init", "session_id": "s", "model": "m"})
-    emit({"type": "result", "subtype": "success", "result": json.dumps(argv),
-          "session_id": "s"})
+    emit({"type": "result", "subtype": "success",
+          "result": json.dumps(argv, ensure_ascii=False), "session_id": "s"})
