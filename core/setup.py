@@ -25,7 +25,13 @@ def open_login_command() -> list[str]:
         return override.split()
     if sys.platform == "win32":
         return ["cmd", "/c", "start", "cmd", "/k", "claude"]
-    return ["open", "-a", "Terminal", "claude"]
+    # `open -a Terminal claude`는 claude를 '파일 경로'로 해석해 no-op이 된다.
+    # osascript로 Terminal에서 claude를 실제 실행 + 전면으로.
+    return [
+        "osascript",
+        "-e", 'tell application "Terminal" to do script "claude"',
+        "-e", 'tell application "Terminal" to activate',
+    ]
 
 
 def install_workspace(bundle_dir: Path, dest_root: Path) -> dict:

@@ -76,3 +76,6 @@ Setup 화면이 뜬다. 아래를 순서대로 확인한다.
 동일 3단계 + embeddable python 추가), **실제 실행은 Windows 머신에서 사용자가 1회
 수행해야 한다** — `.msi` 산출과 위 체크리스트 결과를 이 저장소의 README "P4 검증 로그"에
 추가 기록하는 것을 권장한다.
+
+> **주의 — 스냅샷 신선도**: `publish_agent.zip`은 로컬 클론의 HEAD에서 만들어집니다.
+> 인스톨러 빌드 전 `git -C <publish_agent 경로> pull`로 최신화하세요.
