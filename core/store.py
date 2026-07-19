@@ -128,6 +128,24 @@ class Store:
             out.append(d)
         return out
 
+    def append_parts(self, message_id: int, parts: list[dict]) -> None:
+        """메시지의 content에 파트를 덧붙인다 (아티팩트 파트 등). FTS는 텍스트만
+        인덱싱하므로 재색인 불필요."""
+        if not parts:
+            return
+        row = self._conn().execute(
+            "SELECT content_json FROM messages WHERE id=?", (message_id,)
+        ).fetchone()
+        if row is None:
+            return
+        content = json.loads(row["content_json"])
+        content.extend(parts)
+        with self._conn() as c:
+            c.execute(
+                "UPDATE messages SET content_json=? WHERE id=?",
+                (json.dumps(content, ensure_ascii=False), message_id),
+            )
+
     def add_feedback(self, message_id: int, kind: str, payload: str = "") -> int:
         if kind not in _FEEDBACK_KINDS:
             raise ValueError(f"unknown feedback kind: {kind}")

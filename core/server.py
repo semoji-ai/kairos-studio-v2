@@ -13,6 +13,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from core import providers, settings
+from core.artifacts import collect
 from core.distill import distill
 from core.recall import recall
 from core.router import route
@@ -222,7 +223,40 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
                                              "codex": _cli_status_one("codex")})
                 if u.path == "/workspace/info":
                     return self._workspace_info()
+            # 아티팩트 서빙: 정적 서빙과 동일 근거로 Host 검증만(Bearer 불요 —
+            # <img src="/artifacts/...">는 Authorization 헤더를 실을 수 없다).
+            # 경로는 data_dir/artifacts 루트에 감금(resolve+relative_to).
+            if u.path.startswith("/artifacts/"):
+                return self._serve_artifact(u.path)
             return self._serve_static()
+
+        def _data_dir(self) -> Path:
+            db_path = getattr(state["store"], "_path", None)
+            if db_path is None:
+                db_path = Path(settings.load()["data_dir"]).expanduser() / "kairos.db"
+            return Path(db_path).parent
+
+        _ARTIFACT_CTYPES = {".png": "image/png", ".jpg": "image/jpeg",
+                             ".jpeg": "image/jpeg", ".webp": "image/webp",
+                             ".gif": "image/gif", ".md": "text/markdown"}
+
+        def _serve_artifact(self, url_path: str):
+            root = (self._data_dir() / "artifacts").resolve()
+            rel = url_path[len("/artifacts/"):].split("?", 1)[0]
+            target = (root / rel).resolve()
+            try:
+                target.relative_to(root)
+            except ValueError:
+                return self._send(404, {"error": "not found"})
+            if not target.is_file():
+                return self._send(404, {"error": "not found"})
+            data = target.read_bytes()
+            ctype = self._ARTIFACT_CTYPES.get(target.suffix.lower(), "application/octet-stream")
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
 
         def _workspace_info(self):
             ws_str = settings.load()["workspace_dir"]
@@ -447,9 +481,16 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
                 content.append({"type": "meta", "session_ref": final["session_ref"]})
             mid = store.add_message(session_id, "assistant", content,
                                     provider=provider_name, model=final.get("model"))
+            try:
+                parts = collect(final["text"], cfg.get("workspace_dir"),
+                                self._data_dir(), mid)
+            except Exception:
+                parts = []
+            if parts:
+                store.append_parts(mid, parts)
             self._sse({"type": "done", "message_id": mid,
                        "session_id": session_id, "provider": provider_name,
-                       "recalled": n_recalled})
+                       "recalled": n_recalled, "artifacts": len(parts)})
 
             if (cfg.get("learning_recall_enabled", True)
                     and store.count_undistilled_feedback() >= DISTILL_THRESHOLD):

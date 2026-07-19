@@ -364,3 +364,48 @@ def test_build_prompt_trims_oversized_block():
     rec = {"snippets": snips, "avoid": [], "corrections": []}
     prompt, n = build_prompt("짧은 질문", rec)
     assert n < 5  # 블록이 캡을 넘으면 스니펫이 줄어든다
+
+
+def test_chat_persists_and_serves_artifact(srv, monkeypatch, tmp_path):
+    url, store = srv
+    img = tmp_path / "shot.png"
+    img.write_bytes(b"\x89PNG\r\nfakebytes")
+    monkeypatch.setenv("KAIROS_CLAUDE_CMD",
+                       f"{sys.executable} {FAKES/'fake_echo_claude.py'}")
+    done = _sse_events(_req(url, "/chat", {"text": f"@claude 결과: {img}"}))[-1]
+    assert done["artifacts"] == 1
+    msgs = json.load(_req(url, f"/messages?session_id={done['session_id']}"))["messages"]
+    parts = msgs[-1]["content"]
+    image_parts = [p for p in parts if p.get("type") == "image"]
+    assert len(image_parts) == 1
+    artifact_path = image_parts[0]["artifact"]
+
+    resp = _req(url, f"/artifacts/{artifact_path}", token=None)
+    assert resp.status == 200
+    assert resp.read() == img.read_bytes()
+
+
+def test_artifact_path_escape_is_rejected(srv):
+    url, _ = srv
+    with pytest.raises(urllib.error.HTTPError) as e:
+        _req(url, "/artifacts/../../etc/passwd", token=None)
+    assert e.value.code == 404
+
+
+def test_artifact_served_after_source_deleted(srv, monkeypatch, tmp_path):
+    url, store = srv
+    img = tmp_path / "temp.png"
+    img.write_bytes(b"\x89PNGdeleteme")
+    original_bytes = img.read_bytes()
+    monkeypatch.setenv("KAIROS_CLAUDE_CMD",
+                       f"{sys.executable} {FAKES/'fake_echo_claude.py'}")
+    done = _sse_events(_req(url, "/chat", {"text": f"@claude 결과: {img}"}))[-1]
+    assert done["artifacts"] == 1
+    msgs = json.load(_req(url, f"/messages?session_id={done['session_id']}"))["messages"]
+    artifact_path = next(p for p in msgs[-1]["content"] if p.get("type") == "image")["artifact"]
+
+    img.unlink()  # 원본 삭제
+
+    resp = _req(url, f"/artifacts/{artifact_path}", token=None)
+    assert resp.status == 200
+    assert resp.read() == original_bytes
