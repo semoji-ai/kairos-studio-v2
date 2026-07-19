@@ -14,7 +14,7 @@ export type Msg = {
 export type Session = { id: number; title: string; created_at: string };
 export type ChatEvent =
   | { type: "delta"; text: string }
-  | { type: "done"; message_id: number; session_id: number; provider: string }
+  | { type: "done"; message_id: number; session_id: number; provider: string; recalled?: number }
   | { type: "error"; error: string };
 
 export async function health(): Promise<boolean> {
@@ -42,6 +42,7 @@ export async function sendFeedback(messageId: number, kind: "up" | "down"): Prom
 export type Settings = {
   data_dir: string; default_provider: "claude" | "codex";
   routing_rules_enabled: boolean;
+  learning_recall_enabled: boolean;
   codex_sandbox: "read-only" | "workspace-write";
   claude_permission_mode: "default" | "acceptEdits";
   workspace_dir: string | null;

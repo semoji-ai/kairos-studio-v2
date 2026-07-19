@@ -87,3 +87,19 @@ watchdog에 의해 함께 정리되는지도 같이 확인 권장.
 | 미존재 경로 거부 | ✅ /nope/nope → 400, 설정 유지 |
 | CLI cwd 반영 | ✅ fake_cwd_dump 응답 = /Users/.../publish_agent (SQLite 기록 확인) |
 | 설정 UI(작업 폴더·스킬 안내·권한 권장) | 사용자 수동 확인 대기 |
+
+## P3-1 검증 로그 (2026-07-19)
+
+학습 루프(회상 + 프롬프트 주입) — headless 실측 (temp KAIROS_CONFIG_DIR/KAIROS_DATA_DIR,
+PORT=8798, `KAIROS_CLAUDE_CMD=tests/fakes/fake_argv_dump.py`로 provider 수신 프롬프트 캡처):
+
+| 완료 기준 | 결과 |
+|---|---|
+| 1. 과거 세션 주제를 새 세션에서 물으면 provider 프롬프트에 `[과거 대화 참고]` 블록 포함 | ✅ 세션A "설교 준비를 도와줘"(recalled=0) → 새 세션 "설교 이어서"(recalled=1); argv 덤프 assistant 저장본에 `[과거 대화 참고` 포함 |
+| 2. 한글 2글자 단어("설교")로도 bigram 매칭 회상 | ✅ 위와 동일 요청으로 실증 (2글자 질의로 recalled≥1) |
+| 3. up 피드백 답변 우선 회상 / down 답변은 회피 신호 분리 | Task 1-2 pytest로 검증됨 (`.venv/bin/python -m pytest -q` 72 passed, `test_recall.py` 재랭킹 케이스 포함) |
+| 4. correction 피드백이 `[사용자 교정 이력]`으로 주입 | Task 1-2 pytest로 검증됨 (동일 스위트, `test_recall.py` correction 주입 케이스) |
+| 5. `learning_recall_enabled=false` 시 주입 0 | ✅ PUT /settings `{"learning_recall_enabled": false}` 후 같은 질문 "설교 이어서 다시" → `recalled: 0` |
+| 6. DB에 저장되는 user 원문에는 주입 블록 미포함 | ✅ `/messages` 조회 결과 — user 텍스트 = "설교 이어서 다시" (원문 그대로), assistant 저장본(argv 덤프)에만 `[과거 대화 참고` 포함 |
+| 빌드/유닛 | ✅ `cd app && npm run build` clean, `.venv/bin/python -m pytest -q` 72 passed |
+| Chat.tsx 🧠 회상 표시 / Settings.tsx 학습 회상 토글 | GUI 확인: 사용자 수동 확인 대기 |

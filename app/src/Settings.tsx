@@ -145,6 +145,13 @@ export default function Settings({ onClose }: { onClose: () => void }) {
               </label>
             </div>
             <div style={{ marginTop: 8 }}>
+              <label>
+                <input type="checkbox" checked={settings.learning_recall_enabled}
+                       onChange={e => save({ learning_recall_enabled: e.target.checked })} />
+                {" "}학습 회상 (과거 대화 자동 참조)
+              </label>
+            </div>
+            <div style={{ marginTop: 8 }}>
               codex sandbox:
               <select style={{ marginLeft: 8 }} value={settings.codex_sandbox}
                       onChange={e => save({ codex_sandbox: e.target.value as SettingsType["codex_sandbox"] })}>

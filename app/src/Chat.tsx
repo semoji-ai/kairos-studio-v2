@@ -17,6 +17,7 @@ export default function Chat() {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [view, setView] = useState<"chat" | "settings">("chat");
+  const [recalled, setRecalled] = useState<Record<number, number>>({}); // message_id -> recalled 건수
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { listSessions().then(setSessions); }, []);
@@ -40,6 +41,7 @@ export default function Chat() {
         else if (ev.type === "done") {
           setPending(null); setBusy(false);
           setSessionId(ev.session_id);
+          if (ev.recalled) setRecalled(r => ({ ...r, [ev.message_id]: ev.recalled! }));
           listMessages(ev.session_id).then(setMsgs);   // 서버 진실로 동기화
           listSessions().then(setSessions);
         } else {
@@ -94,6 +96,7 @@ export default function Chat() {
                 {!isPending && m.role === "assistant" && m.id > 0 && (
                   <div style={{ fontSize: 12, color: "#888" }}>
                     {m.provider}
+                    {recalled[m.id] > 0 && <span> 🧠 과거 대화 {recalled[m.id]}건 참조</span>}
                     <button onClick={() => sendFeedback(m.id, "up")}> 👍</button>
                     <button onClick={() => sendFeedback(m.id, "down")}> 👎</button>
                   </div>
