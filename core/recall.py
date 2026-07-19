@@ -133,7 +133,7 @@ def recall(store, query: str, current_session_id: int, limit: int = 3) -> dict:
     related = [c for c in all_corrections if c["session_id"] in matched_session_ids]
     rest = [c for c in all_corrections if c["session_id"] not in matched_session_ids]
     corrections_pool = related + rest
-    corrections = [c["payload"] for c in corrections_pool[:3]]
+    corrections = [_normalize_whitespace(c["payload"]) for c in corrections_pool[:3]]
 
     return {"snippets": snippets, "avoid": avoid, "corrections": corrections}
 
