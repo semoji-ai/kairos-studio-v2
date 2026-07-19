@@ -31,6 +31,17 @@ CREATE TABLE IF NOT EXISTS feedback(
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
   body, message_id UNINDEXED, session_id UNINDEXED, role UNINDEXED
 );
+CREATE TABLE IF NOT EXISTS learned_rules(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  rule TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT '',
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS distill_state(
+  id INTEGER PRIMARY KEY CHECK(id=1),
+  last_feedback_id INTEGER NOT NULL DEFAULT 0
+);
 """
 
 _FEEDBACK_KINDS = {"up", "down", "correction"}
@@ -160,3 +171,57 @@ class Store:
             )
             out.append(d)
         return out
+
+    def add_rule(self, rule: str, source_ids: list[int]) -> int:
+        with self._conn() as c:
+            cur = c.execute(
+                "INSERT INTO learned_rules(rule, source) VALUES (?,?)",
+                (rule, json.dumps(source_ids)),
+            )
+            return cur.lastrowid
+
+    def list_rules(self, active_only: bool = True) -> list[dict]:
+        sql = "SELECT id, rule, source, active, created_at FROM learned_rules"
+        if active_only:
+            sql += " WHERE active=1"
+        sql += " ORDER BY id DESC"
+        rows = self._conn().execute(sql).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["source_ids"] = json.loads(d.pop("source")) if d.get("source") else []
+            d["active"] = bool(d["active"])
+            out.append(d)
+        return out
+
+    def set_rule_active(self, rule_id: int, active: bool) -> None:
+        with self._conn() as c:
+            c.execute(
+                "UPDATE learned_rules SET active=? WHERE id=?",
+                (1 if active else 0, rule_id),
+            )
+
+    def _last_feedback_id(self) -> int:
+        row = self._conn().execute(
+            "SELECT last_feedback_id FROM distill_state WHERE id=1"
+        ).fetchone()
+        return row["last_feedback_id"] if row else 0
+
+    def count_undistilled_feedback(self) -> int:
+        last = self._last_feedback_id()
+        row = self._conn().execute(
+            "SELECT COUNT(*) AS n FROM feedback"
+            " WHERE kind IN ('correction','down') AND id > ?",
+            (last,),
+        ).fetchone()
+        return row["n"]
+
+    def mark_distilled(self) -> None:
+        row = self._conn().execute("SELECT MAX(id) AS m FROM feedback").fetchone()
+        max_id = row["m"] or 0
+        with self._conn() as c:
+            c.execute(
+                "INSERT INTO distill_state(id, last_feedback_id) VALUES (1, ?)"
+                " ON CONFLICT(id) DO UPDATE SET last_feedback_id=excluded.last_feedback_id",
+                (max_id,),
+            )
