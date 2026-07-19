@@ -43,6 +43,21 @@ def install_workspace(bundle_dir: Path, dest_root: Path) -> dict:
     if not existed:
         dest.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(zip_path) as zf:
-            zf.extractall(dest)
+            _safe_extractall(zf, dest)
 
     return {"workspace_dir": str(dest), "existed": existed}
+
+
+def _safe_extractall(zf: zipfile.ZipFile, dest: Path) -> None:
+    """Extract `zf` into `dest`, rejecting zip-slip entries.
+
+    Raises ValueError if any member's name is an absolute path or contains
+    ".." path components (which could otherwise write outside `dest`).
+    """
+    for member in zf.namelist():
+        normalized = member.replace("\\", "/")
+        if normalized.startswith("/") or Path(normalized).is_absolute():
+            raise ValueError(f"unsafe zip entry (absolute path): {member!r}")
+        if any(part == ".." for part in normalized.split("/")):
+            raise ValueError(f"unsafe zip entry (path traversal): {member!r}")
+    zf.extractall(dest)

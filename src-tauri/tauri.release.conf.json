@@ -5,7 +5,7 @@
       "resources/core": "resources/core",
       "resources/dist": "resources/dist",
       "resources/publish_agent.zip": "resources/publish_agent.zip",
-      "resources/python-embed": "resources/python-embed"
+      "resources/python-embed/**/*": "resources/python-embed"
     }
   }
 }

@@ -35,3 +35,19 @@ def test_install_workspace_missing_zip_raises(tmp_path):
     bundle.mkdir()
     with pytest.raises(FileNotFoundError):
         install_workspace(bundle, tmp_path / "dest")
+
+
+def test_install_workspace_rejects_zip_slip(tmp_path):
+    bundle = tmp_path / "evil_bundle"
+    bundle.mkdir()
+    zip_path = bundle / "publish_agent.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        # crafted entry escaping the extraction dir via ".."
+        evil = zipfile.ZipInfo("../evil.txt")
+        zf.writestr(evil, "pwned")
+
+    dest_root = tmp_path / "dest"
+    with pytest.raises(ValueError):
+        install_workspace(bundle, dest_root)
+    # nothing should have leaked outside dest_root's parent
+    assert not (tmp_path / "evil.txt").exists()

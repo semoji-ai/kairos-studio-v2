@@ -141,3 +141,74 @@ PORT=8798, `KAIROS_CLAUDE_CMD=tests/fakes/fake_argv_dump.py`로 provider 수신 
 
 **GUI: 사용자 수동 확인 대기** — 채팅 말풍선 안 이미지 인라인 렌더 및 문서 `<details>` 펼침 시 지연
 로드 동작에 대한 실제 브라우저 조작 확인은 이 세션에서 수행할 수 없어 보류.
+
+## P4 검증 로그 (2026-07-20)
+
+원클릭 인스톨러(설정 마법사 라우트 + Setup.tsx + release 경로 분기 + 빌드 파이프라인).
+스펙 `docs/superpowers/specs/2026-07-20-p4-one-click-install-design.md`.
+
+### 회귀 테스트
+```
+python3 -m pytest -q                  → 102 passed (zip-slip 하드닝 테스트 1건 추가: 101→102)
+(cd src-tauri && cargo test -q)       → 14 passed
+(cd app && npm run build)             → 빌드 성공 (dist/ 생성)
+```
+
+### macOS 실빌드 (이 세션에서 직접 실행, 실측)
+
+```
+./scripts/build-resources.sh
+cd src-tauri && cargo tauri build --config tauri.release.conf.json
+```
+
+1차 시도는 `resources/python-embed` 소스 경로가 macOS에는 존재하지 않아
+(`resource path 'resources/python-embed' doesn't exist`) 실패 — Task 2에서 미검증이던
+`tauri.release.conf.json`의 리소스 병합 가정이 여기서 깨졌다. 글롭 패턴(`**/*`)으로 바꿔도
+매칭되는 파일이 0개면 여전히 실패하는 것을 확인했고, 최종적으로
+`scripts/build-resources.sh`가 macOS에서도 `resources/python-embed/README.txt` 플레이스홀더를
+써서 **디렉터리가 항상 최소 1개 파일을 갖도록** 만드는 방식으로 해결했다 — 이러면
+`tauri.release.conf.json`의 리소스 맵을 플랫폼별로 분기하지 않고 그대로 재사용할 수 있다
+(Windows는 `build-resources.ps1`이 실제 embeddable Python으로 그 자리를 채운다).
+
+산출물:
+```
+src-tauri/target/release/bundle/macos/Kairos Studio.app
+src-tauri/target/release/bundle/dmg/Kairos Studio_0.1.0_aarch64.dmg
+```
+
+`.app` 내부 리소스 레이아웃 실측 (`Contents/Resources/resources/{core,dist,publish_agent.zip,python-embed}`)이
+`src-tauri/src/lib.rs`의 `resolve_paths_for`가 release 모드에서 기대하는
+`resource_dir/resources/core`, `resource_dir/resources/dist`, `resource_dir` = bundle_dir과 정확히
+일치함을 확인 — **lib.rs 수정 불필요**, 리소스 맵 병합 가정이 검증됨.
+
+헤드리스 사이드카 기동 검증(GUI 창을 이 세션에서 열 수 없어, 번들된 리소스 디렉터리에서
+직접 `python3 -m core`를 실행해 release 경로에서 import·기동이 되는지 확인):
+
+```
+cd ".../Kairos Studio.app/Contents/Resources/resources"
+PORT=8801 TOKEN=testtoken KAIROS_STATIC_DIR=.../dist KAIROS_DATA_DIR=/tmp/kairos-release-check \
+  KAIROS_CONFIG_DIR=/tmp/kairos-release-check KAIROS_BUNDLE_DIR=.../resources \
+  /usr/bin/python3 -m core
+```
+
+결과: 핸드셰이크 라인 `{"host": "127.0.0.1", "port": 8801, "token": "testtoken"}` 출력,
+`curl http://127.0.0.1:8801/health` → `{"ok": true}`. 프로세스는 확인 후 kill.
+
+| 완료 기준 | 결과 |
+|---|---|
+| 1. release 모드 경로 해석 — rust 단위 테스트 | ✅ `resolve_paths_release_uses_resource_dir` 등 기존 14건에 포함, 실빌드로 실측 재확인 |
+| 2. /setup/status·install-workspace headless 실증 | ✅ `tests/test_setup.py` 4건 (zip 해제→workspace 지정→스킬 감지, zip-slip 거부 포함) |
+| 3. install-cli 명령 구성 단위 테스트 | ✅ `test_cli_install_command_env_override` |
+| 4. macOS `build-resources.sh` + `cargo tauri build` 성공, `.dmg` 산출·실행 확인 | ✅ 위 로그 — `.app`/`.dmg` 산출, 번들 리소스에서 사이드카 기동+`/health` 확인 |
+| 5. Windows 빌드 절차 문서화 | ✅ `docs/windows-build.md` — 실행은 사용자 Windows 머신에서 대기 |
+
+### Windows
+
+`scripts/build-resources.ps1` 작성 완료(embeddable Python 3.12.7 amd64 고정 URL +
+SHA256 검증 — 이 세션에서 `curl`로 실제 다운로드해 해시를 계산해 스크립트에 박아 넣음,
+`shasum -a 256` 실측값 사용). **실제 `.msi` 빌드는 Windows 머신에서 미실행** — 절차는
+`docs/windows-build.md`에 문서화, 실행 후 결과를 이 섹션에 추가 기록 권장.
+
+**GUI 수동 확인 대기**: Setup.tsx 마법사 3스텝(CLI 설치/로그인/설교 도우미)의 실제 클릭
+조작, macOS `.app` 더블클릭 실행 후 첫 화면, Windows `.msi` 설치 후 스모크 체크리스트
+(`docs/windows-build.md` 참조) — 이 세션에서 수행 불가.
