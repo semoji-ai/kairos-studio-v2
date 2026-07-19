@@ -409,3 +409,34 @@ def test_artifact_served_after_source_deleted(srv, monkeypatch, tmp_path):
     resp = _req(url, f"/artifacts/{artifact_path}", token=None)
     assert resp.status == 200
     assert resp.read() == original_bytes
+
+
+def test_setup_status_shape(srv):
+    url, _ = srv
+    st = json.load(_req(url, "/setup/status"))
+    assert st["cli"]["claude"]["installed"] is True
+    assert st["all_ready"] is True   # fake claude: installed + authed(returncode 0)
+    assert "workspace_dir" in st and "workspace_ready" in st
+
+
+def test_setup_install_cli_with_mock_cmd(srv, monkeypatch):
+    url, _ = srv
+    monkeypatch.setenv("KAIROS_CLI_INSTALL_CMD", f"{sys.executable} -c print('ok')")
+    resp = json.load(_req(url, "/setup/install-cli", {}))
+    assert resp["ok"] is True
+
+
+def test_setup_install_workspace_extracts_zip(srv, tmp_path, monkeypatch):
+    url, _ = srv
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    import zipfile
+    with zipfile.ZipFile(bundle / "publish_agent.zip", "w") as zf:
+        zf.writestr("skills/publish-write/SKILL.md", "# skill")
+    monkeypatch.setenv("KAIROS_BUNDLE_DIR", str(bundle))
+    docs = tmp_path / "home" / "Documents"
+    docs.mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    resp = json.load(_req(url, "/setup/install-workspace", {}))
+    assert resp["workspace_dir"] == str(docs / "publish-agent")
+    assert resp["skills"] >= 1

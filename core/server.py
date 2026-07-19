@@ -12,7 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from core import providers, settings
+from core import providers, settings, setup
 from core.artifacts import collect
 from core.distill import distill
 from core.recall import recall
@@ -132,6 +132,29 @@ def _cli_status_one(name: str) -> dict:
             "login_hint": _CLI_LOGIN_HINT[name]}
 
 
+def _workspace_info_dict(ws_str: str | None) -> dict:
+    """workspace/info와 setup/status가 공유하는 스킬 감지 로직."""
+    if ws_str is None:
+        return {"workspace_dir": None, "exists": None, "skills": [], "has_claude_md": False}
+    ws = Path(ws_str).expanduser()
+    exists = ws.is_dir()
+    skills: set[str] = set()
+    if exists:
+        claude_skills = ws / ".claude" / "skills"
+        if claude_skills.is_dir():
+            for d in claude_skills.iterdir():
+                if d.is_dir():
+                    skills.add(d.name)
+        plain_skills = ws / "skills"
+        if plain_skills.is_dir():
+            for d in plain_skills.iterdir():
+                if d.is_dir() and (d / "SKILL.md").is_file():
+                    skills.add(d.name)
+    has_claude_md = exists and (ws / "CLAUDE.md").is_file()
+    return {"workspace_dir": ws_str, "exists": exists, "skills": sorted(skills),
+            "has_claude_md": has_claude_md}
+
+
 def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTPServer:
     state = {"store": store}
 
@@ -198,7 +221,7 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
             # 인증은 API 라우트에만. 그 외 경로는 Task 8에서 정적 서빙이 된다
             # (토큰이 index.html 주입으로 전달되므로 정적은 인증 불가/불요).
             if u.path in ("/sessions", "/messages", "/settings", "/storage", "/cli/status",
-                          "/workspace/info", "/rules"):
+                          "/workspace/info", "/rules", "/setup/status"):
                 if not self._authed():
                     return self._send(401, {"error": "unauthorized"})
                 if u.path == "/rules":
@@ -223,6 +246,8 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
                                              "codex": _cli_status_one("codex")})
                 if u.path == "/workspace/info":
                     return self._workspace_info()
+                if u.path == "/setup/status":
+                    return self._setup_status()
             # 아티팩트 서빙: 정적 서빙과 동일 근거로 Host 검증만(Bearer 불요 —
             # <img src="/artifacts/...">는 Authorization 헤더를 실을 수 없다).
             # 경로는 data_dir/artifacts 루트에 감금(resolve+relative_to).
@@ -260,27 +285,50 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
 
         def _workspace_info(self):
             ws_str = settings.load()["workspace_dir"]
-            if ws_str is None:
-                return self._send(200, {"workspace_dir": None, "exists": None,
-                                         "skills": [], "has_claude_md": False})
-            ws = Path(ws_str).expanduser()
-            exists = ws.is_dir()
-            skills: set[str] = set()
-            if exists:
-                claude_skills = ws / ".claude" / "skills"
-                if claude_skills.is_dir():
-                    for d in claude_skills.iterdir():
-                        if d.is_dir():
-                            skills.add(d.name)
-                plain_skills = ws / "skills"
-                if plain_skills.is_dir():
-                    for d in plain_skills.iterdir():
-                        if d.is_dir() and (d / "SKILL.md").is_file():
-                            skills.add(d.name)
-            has_claude_md = exists and (ws / "CLAUDE.md").is_file()
-            return self._send(200, {"workspace_dir": ws_str, "exists": exists,
-                                     "skills": sorted(skills),
-                                     "has_claude_md": has_claude_md})
+            return self._send(200, _workspace_info_dict(ws_str))
+
+        def _setup_status(self):
+            cli = {"claude": _cli_status_one("claude"), "codex": _cli_status_one("codex")}
+            ws_str = settings.load()["workspace_dir"]
+            ws_info = _workspace_info_dict(ws_str)
+            workspace_ready = bool(ws_info["skills"])
+            all_ready = bool(cli["claude"]["installed"]) and bool(cli["claude"]["authed"])
+            return self._send(200, {"cli": cli, "workspace_dir": ws_str,
+                                     "workspace_ready": workspace_ready,
+                                     "all_ready": all_ready})
+
+        def _setup_install_cli(self):
+            cmd = setup.cli_install_command()
+            try:
+                r = subprocess.run(cmd, capture_output=True, timeout=300,
+                                    encoding="utf-8", errors="replace")
+                rc = r.returncode
+                out = (r.stdout or "") + (r.stderr or "")
+            except Exception as exc:
+                rc = -1
+                out = str(exc)
+            return self._send(200, {"ok": rc == 0, "tail": out[-500:]})
+
+        def _setup_open_login(self):
+            cmd = setup.open_login_command()
+            try:
+                subprocess.Popen(cmd)
+            except Exception as exc:
+                return self._send(200, {"ok": False, "error": str(exc)})
+            return self._send(200, {"ok": True})
+
+        def _setup_install_workspace(self):
+            bundle_dir = Path(os.environ.get("KAIROS_BUNDLE_DIR", "."))
+            documents = Path.home() / "Documents"
+            dest_root = documents if documents.is_dir() else Path.home()
+            try:
+                result = setup.install_workspace(bundle_dir, dest_root)
+            except FileNotFoundError as exc:
+                return self._send(400, {"error": str(exc)})
+            settings.save({"workspace_dir": result["workspace_dir"]})
+            ws_info = _workspace_info_dict(result["workspace_dir"])
+            return self._send(200, {"workspace_dir": result["workspace_dir"],
+                                     "skills": len(ws_info["skills"])})
 
         def _storage(self):
             db_path = getattr(state["store"], "_path", None)
@@ -356,6 +404,12 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
                 return self._set_rule_active(body)
             if self.path == "/distill":
                 return self._distill()
+            if self.path == "/setup/install-cli":
+                return self._setup_install_cli()
+            if self.path == "/setup/open-login":
+                return self._setup_open_login()
+            if self.path == "/setup/install-workspace":
+                return self._setup_install_workspace()
             return self._send(404, {"error": "not found"})
 
         def _set_rule_active(self, body: dict):
