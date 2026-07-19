@@ -338,6 +338,8 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
                 return self._send(409, {"error": "distill already running"})
             try:
                 result = distill(state["store"], providers.get("claude").chat, settings.load())
+            except Exception as exc:
+                return self._send(500, {"error": str(exc)})
             finally:
                 _distill_lock.release()
             return self._send(200, result)

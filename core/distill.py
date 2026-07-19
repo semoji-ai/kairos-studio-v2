@@ -108,7 +108,8 @@ def distill(store, chat_fn: Callable[..., Iterator[dict]], cfg: dict | None = No
         if event.get("type") == "done":
             final_text = event.get("text", "") or ""
         elif event.get("type") == "error":
-            return {"added": [], "error": "parse"}
+            msg = event.get("error") or event.get("message") or "unknown error"
+            return {"added": [], "error": f"provider: {msg}"}
 
     parsed = _extract_json_array(final_text)
     if not isinstance(parsed, list):
@@ -126,6 +127,6 @@ def distill(store, chat_fn: Callable[..., Iterator[dict]], cfg: dict | None = No
 
     for rule, source_ids in added:
         store.add_rule(rule, source_ids)
-    store.mark_distilled()
+    store.mark_distilled(max(it["id"] for it in items))
 
     return {"added": [r for r, _ in added]}

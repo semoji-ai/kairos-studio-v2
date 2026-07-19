@@ -216,9 +216,12 @@ class Store:
         ).fetchone()
         return row["n"]
 
-    def mark_distilled(self) -> None:
-        row = self._conn().execute("SELECT MAX(id) AS m FROM feedback").fetchone()
-        max_id = row["m"] or 0
+    def mark_distilled(self, up_to_id: int | None = None) -> None:
+        if up_to_id is None:
+            row = self._conn().execute("SELECT MAX(id) AS m FROM feedback").fetchone()
+            max_id = row["m"] or 0
+        else:
+            max_id = up_to_id
         with self._conn() as c:
             c.execute(
                 "INSERT INTO distill_state(id, last_feedback_id) VALUES (1, ?)"

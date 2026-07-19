@@ -79,3 +79,27 @@ def test_up_feedback_not_counted_as_undistilled(tmp_path):
     store.add_feedback(mid, "up", "")
 
     assert store.count_undistilled_feedback() == 0
+
+
+def test_distill_only_marks_processed_items_not_all(tmp_path, monkeypatch):
+    """35개 correction 피드백이 있어도 distill은 MAX_FEEDBACK_ITEMS(30)개만 처리한다.
+    mark_distilled가 처리한 항목의 최대 id까지만 커밋해야, 남은 5개가 다음 distill에서 잡힌다."""
+    monkeypatch.setenv("KAIROS_CLAUDE_CMD", f"{sys.executable} {FAKE}")
+    store = _mk_store(tmp_path)
+    for i in range(35):
+        _seed_correction(store, f"교정 {i}")
+
+    distill(store, claude_provider.chat)
+
+    assert store.count_undistilled_feedback() == 5
+
+
+def test_distill_provider_error_labeled_distinctly(tmp_path, monkeypatch):
+    monkeypatch.setenv("KAIROS_CLAUDE_CMD", "/nonexistent")
+    store = _mk_store(tmp_path)
+    _seed_correction(store)
+
+    result = distill(store, claude_provider.chat)
+
+    assert result["added"] == []
+    assert result["error"].startswith("provider:")

@@ -57,8 +57,13 @@ export default function Settings({ onClose }: { onClose: () => void }) {
   }
 
   async function toggleRule(id: number, active: boolean) {
-    await setRuleActive(id, active);
-    refreshRules();
+    try {
+      await setRuleActive(id, active);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      refreshRules();
+    }
   }
 
   async function save(patch: Partial<SettingsType>) {
