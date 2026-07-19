@@ -17,11 +17,54 @@ pub fn repo_root() -> PathBuf {
         .to_path_buf()
 }
 
-pub fn spawn_sidecar(repo_root: &Path, token: &str, data_dir: &Path) -> std::io::Result<(Child, ServerInfo)> {
-    let py = sidecar::python_path(repo_root, sidecar::Os::current());
-    let mut cmd = Command::new(py);
+/// Resolved paths the sidecar needs, dev vs. release.
+pub struct ResolvedPaths {
+    /// `python -m core` interpreter.
+    pub python: PathBuf,
+    /// Directory containing the `core` package; `python -m core` is run with
+    /// this as `current_dir` (its parent must be on `sys.path`, so we set
+    /// `current_dir` to `core_dir`'s parent).
+    pub core_dir: PathBuf,
+    /// Built SPA assets (`KAIROS_STATIC_DIR`).
+    pub static_dir: PathBuf,
+    /// Directory holding `publish_agent.zip` etc. (`KAIROS_BUNDLE_DIR`).
+    pub bundle_dir: PathBuf,
+}
+
+/// dev (debug build): everything relative to the repo checkout.
+/// release: everything relative to Tauri's bundled `resource_dir()`.
+pub fn resolve_paths(repo_root: &Path, resource_dir: Option<&Path>) -> ResolvedPaths {
+    resolve_paths_for(repo_root, resource_dir, cfg!(debug_assertions))
+}
+
+/// Same as [`resolve_paths`] but with the dev/release choice passed explicitly,
+/// so both branches are unit-testable regardless of how the test binary itself
+/// was compiled.
+pub fn resolve_paths_for(repo_root: &Path, resource_dir: Option<&Path>, dev: bool) -> ResolvedPaths {
+    if dev {
+        ResolvedPaths {
+            python: sidecar::python_path(repo_root, sidecar::Os::current(), false),
+            core_dir: repo_root.join("core"),
+            static_dir: repo_root.join("app").join("dist"),
+            bundle_dir: repo_root.to_path_buf(),
+        }
+    } else {
+        let base = resource_dir.expect("resource_dir required in release builds");
+        ResolvedPaths {
+            python: sidecar::python_path(base, sidecar::Os::current(), true),
+            core_dir: base.join("resources").join("core"),
+            static_dir: base.join("resources").join("dist"),
+            bundle_dir: base.to_path_buf(),
+        }
+    }
+}
+
+pub fn spawn_sidecar(paths: &ResolvedPaths, token: &str, data_dir: &Path) -> std::io::Result<(Child, ServerInfo)> {
+    // `python -m core` needs `core`'s *parent* directory on sys.path/cwd.
+    let cwd = paths.core_dir.parent().unwrap_or(&paths.core_dir);
+    let mut cmd = Command::new(&paths.python);
     cmd.arg("-m").arg("core");
-    for (k, v) in sidecar::sidecar_env(repo_root, token, data_dir) {
+    for (k, v) in sidecar::sidecar_env(&paths.static_dir, &paths.bundle_dir, token, data_dir) {
         cmd.env(k, v);
     }
     // Force unbuffered stdout: CPython block-buffers stdout when it is a pipe
@@ -36,7 +79,7 @@ pub fn spawn_sidecar(repo_root: &Path, token: &str, data_dir: &Path) -> std::io:
     // / e2e launches (which don't set it) are unaffected. We keep child.stdin
     // open (never take() it) so the write end stays held until this process ends.
     cmd.env("KAIROS_SIDECAR_STDIN_WATCH", "1");
-    cmd.current_dir(repo_root);
+    cmd.current_dir(cwd);
     cmd.stdin(Stdio::piped());
     cmd.stdout(Stdio::piped());
     let mut child = cmd.spawn()?;
@@ -128,7 +171,9 @@ pub fn run() {
         .setup(move |app| {
             use tauri::Manager;
             let data_dir = app.path().app_data_dir().expect("app data dir");
-            let (mut child, info) = spawn_sidecar(&root, &token, &data_dir)
+            let resource_dir = app.path().resource_dir().ok();
+            let paths = resolve_paths(&root, resource_dir.as_deref());
+            let (mut child, info) = spawn_sidecar(&paths, &token, &data_dir)
                 .map_err(|e| format!("failed to spawn sidecar: {e}"))?;
 
             if !wait_for_health(info.port, 100, 100) {
@@ -243,5 +288,32 @@ mod tests {
         }
         let err = read_first_line_timeout(Stall, Duration::from_millis(150)).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
+    }
+
+    #[test]
+    fn resolve_paths_dev_uses_repo_root() {
+        let root = Path::new("/repo");
+        let paths = resolve_paths_for(root, Some(Path::new("/should/be/ignored")), true);
+        assert_eq!(paths.core_dir, PathBuf::from("/repo/core"));
+        assert_eq!(paths.static_dir, PathBuf::from("/repo/app/dist"));
+        assert_eq!(paths.bundle_dir, PathBuf::from("/repo"));
+        assert!(paths.python.to_string_lossy().contains(".venv"));
+    }
+
+    #[test]
+    fn resolve_paths_release_uses_resource_dir() {
+        let root = Path::new("/repo");
+        let resource_dir = Path::new("/Applications/Kairos.app/Contents/Resources");
+        let paths = resolve_paths_for(root, Some(resource_dir), false);
+        assert_eq!(paths.core_dir, resource_dir.join("resources").join("core"));
+        assert_eq!(paths.static_dir, resource_dir.join("resources").join("dist"));
+        assert_eq!(paths.bundle_dir, resource_dir.to_path_buf());
+        assert_eq!(paths.python, PathBuf::from("/usr/bin/python3"));
+    }
+
+    #[test]
+    #[should_panic(expected = "resource_dir required")]
+    fn resolve_paths_release_without_resource_dir_panics() {
+        resolve_paths_for(Path::new("/repo"), None, false);
     }
 }

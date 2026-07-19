@@ -75,6 +75,32 @@ export async function workspaceInfo(): Promise<WorkspaceInfo> {
   return (await fetch("/workspace/info", { headers: HDRS })).json();
 }
 
+export type SetupStatus = {
+  cli: CliStatus;
+  workspace_dir: string | null;
+  workspace_ready: boolean;
+  all_ready: boolean;
+};
+
+export async function setupStatus(): Promise<SetupStatus> {
+  const r = await fetch("/setup/status", { headers: HDRS });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+export async function installCli(): Promise<{ ok: boolean; tail?: string; hint?: string }> {
+  const r = await fetch("/setup/install-cli", { method: "POST", headers: HDRS });
+  return r.json();
+}
+export async function openLogin(): Promise<{ ok: boolean; error?: string }> {
+  const r = await fetch("/setup/open-login", { method: "POST", headers: HDRS });
+  return r.json();
+}
+export async function installWorkspace(): Promise<{ workspace_dir: string; skills: number }> {
+  const r = await fetch("/setup/install-workspace", { method: "POST", headers: HDRS });
+  if (!r.ok) throw new Error((await r.json()).error ?? `HTTP ${r.status}`);
+  return r.json();
+}
+
 export type Rule = { id: number; rule: string; active: boolean; created_at: string };
 
 export async function getRules(): Promise<{ rules: Rule[]; undistilled: number }> {

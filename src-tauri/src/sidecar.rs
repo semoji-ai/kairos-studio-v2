@@ -23,27 +23,32 @@ pub struct ServerInfo {
     pub token: String,
 }
 
-pub fn python_path(repo_root: &Path, os: Os) -> PathBuf {
-    match os {
-        Os::Unix => repo_root.join(".venv").join("bin").join("python"),
-        Os::Windows => repo_root.join(".venv").join("Scripts").join("python.exe"),
+/// `base` is repo_root in dev, Tauri's resource_dir() in release.
+/// - dev: existing `.venv` (Unix `.venv/bin/python`, Windows `.venv\Scripts\python.exe`)
+/// - release Windows: bundled embeddable interpreter at `base/python-embed/python.exe`
+/// - release Unix (macOS): the system `python3` (stdlib-only sidecar needs nothing else)
+pub fn python_path(base: &Path, os: Os, release: bool) -> PathBuf {
+    match (release, os) {
+        (false, Os::Unix) => base.join(".venv").join("bin").join("python"),
+        (false, Os::Windows) => base.join(".venv").join("Scripts").join("python.exe"),
+        (true, Os::Windows) => base.join("python-embed").join("python.exe"),
+        (true, Os::Unix) => PathBuf::from("/usr/bin/python3"),
     }
 }
 
-pub fn sidecar_env(repo_root: &Path, token: &str, data_dir: &Path) -> Vec<(String, String)> {
-    let p = |parts: &[&str]| {
-        let mut d = repo_root.to_path_buf();
-        for part in parts {
-            d = d.join(part);
-        }
-        d.to_string_lossy().to_string()
-    };
+pub fn sidecar_env(
+    static_dir: &Path,
+    bundle_dir: &Path,
+    token: &str,
+    data_dir: &Path,
+) -> Vec<(String, String)> {
     vec![
         ("PORT".to_string(), "0".to_string()),
         ("TOKEN".to_string(), token.to_string()),
-        ("KAIROS_STATIC_DIR".to_string(), p(&["app", "dist"])),
+        ("KAIROS_STATIC_DIR".to_string(), static_dir.to_string_lossy().to_string()),
         ("KAIROS_DATA_DIR".to_string(), data_dir.to_string_lossy().to_string()),
         ("KAIROS_CONFIG_DIR".to_string(), data_dir.to_string_lossy().to_string()),
+        ("KAIROS_BUNDLE_DIR".to_string(), bundle_dir.to_string_lossy().to_string()),
     ]
 }
 
@@ -83,22 +88,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn python_path_is_platform_specific() {
+    fn python_path_dev_is_platform_specific() {
         let root = Path::new("/repo");
-        assert_eq!(python_path(root, Os::Unix), PathBuf::from("/repo/.venv/bin/python"));
-        let win = python_path(Path::new("C:\\repo"), Os::Windows);
+        assert_eq!(python_path(root, Os::Unix, false), PathBuf::from("/repo/.venv/bin/python"));
+        let win = python_path(Path::new("C:\\repo"), Os::Windows, false);
         assert!(win.to_string_lossy().replace('/', "\\").ends_with(".venv\\Scripts\\python.exe"));
     }
 
     #[test]
+    fn python_path_release_windows_uses_embedded_python() {
+        let base = Path::new("C:\\resources");
+        let win = python_path(base, Os::Windows, true);
+        assert!(win.to_string_lossy().replace('/', "\\").ends_with("python-embed\\python.exe"));
+    }
+
+    #[test]
+    fn python_path_release_unix_uses_system_python() {
+        let base = Path::new("/resources");
+        assert_eq!(python_path(base, Os::Unix, true), PathBuf::from("/usr/bin/python3"));
+    }
+
+    #[test]
     fn sidecar_env_sets_required_vars() {
-        let env = sidecar_env(Path::new("/repo"), "tok123", Path::new("/data"));
+        let env = sidecar_env(Path::new("/repo/app/dist"), Path::new("/bundle"), "tok123", Path::new("/data"));
         let get = |k: &str| env.iter().find(|(a, _)| a == k).map(|(_, v)| v.clone());
         assert_eq!(get("PORT"), Some("0".to_string()));
         assert_eq!(get("TOKEN"), Some("tok123".to_string()));
         assert_eq!(get("KAIROS_STATIC_DIR"), Some("/repo/app/dist".to_string()));
         assert_eq!(get("KAIROS_DATA_DIR"), Some("/data".to_string()));
         assert_eq!(get("KAIROS_CONFIG_DIR"), Some("/data".to_string()));
+        assert_eq!(get("KAIROS_BUNDLE_DIR"), Some("/bundle".to_string()));
     }
 
     #[test]

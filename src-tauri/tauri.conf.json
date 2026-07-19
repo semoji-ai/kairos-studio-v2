@@ -15,6 +15,12 @@
   "bundle": {
     "active": false,
     "targets": "all",
-    "icon": ["icons/icon.png"]
+    "icon": ["icons/icon.png"],
+    "resources": {
+      "resources/core": "resources/core",
+      "resources/dist": "resources/dist",
+      "resources/publish_agent.zip": "resources/publish_agent.zip",
+      "resources/python-embed": "resources/python-embed"
+    }
   }
 }
