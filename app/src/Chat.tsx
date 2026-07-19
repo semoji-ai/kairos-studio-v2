@@ -9,6 +9,29 @@ function textOf(m: Msg): string {
   return m.content.filter(p => p.type === "text").map(p => p.text ?? "").join("");
 }
 
+function DocBody({ artifact, open }: { artifact?: string; open: boolean }) {
+  const [body, setBody] = useState<string | null>(null);
+  useEffect(() => {
+    if (open && body == null && artifact) {
+      fetch("/artifacts/" + artifact)
+        .then(r => r.text())
+        .then(setBody)
+        .catch(() => setBody("(불러오기 실패)"));
+    }
+  }, [open, body, artifact]);
+  return <pre style={{ whiteSpace: "pre-wrap" }}>{body}</pre>;
+}
+
+function PartDetails({ artifact, title }: { artifact?: string; title?: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details style={{ marginTop: 8 }} onToggle={e => setOpen((e.target as HTMLDetailsElement).open)}>
+      <summary>📄 {title ?? artifact}</summary>
+      <DocBody artifact={artifact} open={open} />
+    </details>
+  );
+}
+
 export default function Chat() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [sessionId, setSessionId] = useState<number | null>(null);
@@ -92,6 +115,14 @@ export default function Chat() {
                               whiteSpace: "pre-wrap", maxWidth: "80%",
                               background: b.role === "user" ? "#dbeafe" : "#f3f4f6" }}>
                   {text}{isPending && "▌"}
+                  {!isPending && m.role === "assistant" && m.content
+                    .filter(p => p.type === "image" || p.type === "document")
+                    .map((p, pi) => p.type === "image" ? (
+                      <img key={pi} src={"/artifacts/" + p.artifact}
+                           style={{ maxWidth: "100%", borderRadius: 8, display: "block", marginTop: 8 }} />
+                    ) : (
+                      <PartDetails key={pi} artifact={p.artifact} title={p.title} />
+                    ))}
                 </div>
                 {!isPending && m.role === "assistant" && m.id > 0 && (
                   <div style={{ fontSize: 12, color: "#888" }}>

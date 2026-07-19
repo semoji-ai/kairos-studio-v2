@@ -8,13 +8,13 @@ const HDRS = { "Authorization": `Bearer ${TOKEN}`, "Content-Type": "application/
 
 export type Msg = {
   id: number; session_id: number; role: "user" | "assistant";
-  content: { type: string; text?: string }[];
+  content: { type: string; text?: string; artifact?: string; title?: string }[];
   provider?: string | null; model?: string | null;
 };
 export type Session = { id: number; title: string; created_at: string };
 export type ChatEvent =
   | { type: "delta"; text: string }
-  | { type: "done"; message_id: number; session_id: number; provider: string; recalled?: number }
+  | { type: "done"; message_id: number; session_id: number; provider: string; recalled?: number; artifacts?: number }
   | { type: "error"; error: string };
 
 export async function health(): Promise<boolean> {

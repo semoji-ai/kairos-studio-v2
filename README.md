@@ -122,3 +122,22 @@ PORT=8798, `KAIROS_CLAUDE_CMD=tests/fakes/fake_argv_dump.py`로 provider 수신 
 
 **GUI: 사용자 수동 확인 대기** — Settings 화면의 "학습된 규칙" 섹션(미증류 건수 표시, [지금 증류] 버튼 클릭,
 규칙별 체크박스 토글)에 대한 실제 조작 확인은 이 세션에서 수행할 수 없어 보류.
+
+## P2 검증 로그 (2026-07-20)
+
+인라인 아티팩트 UI 렌더(`app/src/api.ts` content 파트 타입 확장, `app/src/Chat.tsx` image/document 파트 렌더 +
+`<details>` 지연 fetch) + headless 수용 실측 (temp `KAIROS_CONFIG_DIR`/`KAIROS_DATA_DIR`, `PORT=8800`,
+`KAIROS_CLAUDE_CMD=tests/fakes/fake_echo_claude.py`로 프롬프트 속 파일 경로를 응답 텍스트에 그대로 에코시켜
+감지를 유도, `/chat` → `store.list_messages` → `/artifacts/...`를 직접 호출):
+
+| 완료 기준 | 결과 |
+|---|---|
+| 1. 응답 텍스트의 이미지 경로 → artifacts 복사 + content에 image 파트, done SSE `artifacts≥1` | ✅ 임시 `pic.png`+`doc.md`+11MB `big.png` 경로를 포함한 프롬프트 전송 → `done: {"artifacts": 2, ...}`, content에 `{"type":"image","artifact":"2/pic.png"}` |
+| 2. `GET /artifacts/...`로 이미지 바이트 서빙, 경로 탈출은 404 | ✅ 서빙된 바이트가 원본 `pic.png`와 바이트 동일; `GET /artifacts/../../etc/passwd` → HTTP 404 |
+| 3. md 경로 → document 파트 + 서빙 | ✅ `{"type":"document","artifact":"2/doc.md","title":"doc.md"}` 생성, `GET /artifacts/2/doc.md` 본문이 원본과 일치 |
+| 4. 미존재 경로·크기 초과는 무시, 채팅 정상 완료 | ✅ 11MB `big.png`(이미지 한도 10MB 초과) 경로가 프롬프트에 포함돼도 parts에 등장하지 않고 `done`은 정상 도달(`artifacts:2`만 반영, big.png 제외) |
+| 5. 원본 삭제 후에도 채팅 아티팩트는 서빙됨 | ✅ `pic.png`/`doc.md` 원본 삭제 후 동일 `GET /artifacts/2/pic.png` 재요청 → 여전히 200 + 동일 바이트 |
+| 빌드/유닛 | ✅ `cd app && npm run build` clean, `python3 -m pytest -q` 95 passed |
+
+**GUI: 사용자 수동 확인 대기** — 채팅 말풍선 안 이미지 인라인 렌더 및 문서 `<details>` 펼침 시 지연
+로드 동작에 대한 실제 브라우저 조작 확인은 이 세션에서 수행할 수 없어 보류.
