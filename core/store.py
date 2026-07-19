@@ -28,6 +28,9 @@ CREATE TABLE IF NOT EXISTS feedback(
   payload TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+  body, message_id UNINDEXED, session_id UNINDEXED, role UNINDEXED
+);
 """
 
 _FEEDBACK_KINDS = {"up", "down", "correction"}
@@ -40,6 +43,26 @@ class Store:
         self._local = threading.local()
         with self._conn() as c:
             c.executescript(_SCHEMA)
+        self._backfill_fts()
+
+    def _backfill_fts(self) -> None:
+        from core.recall import bigrams  # local import: avoid import cycle at module load
+
+        with self._conn() as c:
+            rows = c.execute(
+                "SELECT id, session_id, role, content_json FROM messages"
+                " WHERE id NOT IN (SELECT message_id FROM messages_fts)"
+            ).fetchall()
+            for r in rows:
+                content = json.loads(r["content_json"])
+                text = " ".join(
+                    p.get("text", "") for p in content if p.get("type") == "text"
+                )
+                c.execute(
+                    "INSERT INTO messages_fts(body, message_id, session_id, role)"
+                    " VALUES (?,?,?,?)",
+                    (bigrams(text), r["id"], r["session_id"], r["role"]),
+                )
 
     def _conn(self) -> sqlite3.Connection:
         conn = getattr(self._local, "conn", None)
@@ -62,13 +85,24 @@ class Store:
 
     def add_message(self, session_id: int, role: str, content: list[dict],
                     provider: str | None = None, model: str | None = None) -> int:
+        from core.recall import bigrams  # local import: avoid import cycle at module load
+
         with self._conn() as c:
             cur = c.execute(
                 "INSERT INTO messages(session_id, role, content_json, provider, model)"
                 " VALUES (?,?,?,?,?)",
                 (session_id, role, json.dumps(content, ensure_ascii=False), provider, model),
             )
-            return cur.lastrowid
+            message_id = cur.lastrowid
+            text = " ".join(
+                p.get("text", "") for p in content if p.get("type") == "text"
+            )
+            c.execute(
+                "INSERT INTO messages_fts(body, message_id, session_id, role)"
+                " VALUES (?,?,?,?)",
+                (bigrams(text), message_id, session_id, role),
+            )
+            return message_id
 
     def list_messages(self, session_id: int) -> list[dict]:
         rows = self._conn().execute(
@@ -92,3 +126,37 @@ class Store:
                 (message_id, kind, payload),
             )
             return cur.lastrowid
+
+    def feedback_for_message(self, message_id: int) -> list[dict]:
+        rows = self._conn().execute(
+            "SELECT id, message_id, kind, payload, created_at FROM feedback"
+            " WHERE message_id=? ORDER BY id",
+            (message_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def list_corrections(self, limit: int = 20) -> list[dict]:
+        rows = self._conn().execute(
+            """
+            SELECT f.id, f.message_id, f.payload, f.created_at,
+                   m.session_id AS session_id,
+                   (SELECT content_json FROM messages
+                      WHERE session_id = m.session_id AND id < m.id AND role = 'user'
+                      ORDER BY id DESC LIMIT 1) AS q_content_json
+            FROM feedback f
+            JOIN messages m ON m.id = f.message_id
+            WHERE f.kind = 'correction'
+            ORDER BY f.id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            q_content = json.loads(d.pop("q_content_json")) if d.get("q_content_json") else []
+            d["q_text"] = " ".join(
+                p.get("text", "") for p in q_content if p.get("type") == "text"
+            )
+            out.append(d)
+        return out
