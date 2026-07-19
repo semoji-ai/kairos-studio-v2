@@ -75,6 +75,21 @@ export async function workspaceInfo(): Promise<WorkspaceInfo> {
   return (await fetch("/workspace/info", { headers: HDRS })).json();
 }
 
+export type Rule = { id: number; rule: string; active: boolean; created_at: string };
+
+export async function getRules(): Promise<{ rules: Rule[]; undistilled: number }> {
+  return (await fetch("/rules", { headers: HDRS })).json();
+}
+export async function setRuleActive(id: number, active: boolean): Promise<void> {
+  await fetch("/rules", { method: "POST", headers: HDRS, body: JSON.stringify({ id, active }) });
+}
+export async function runDistill(): Promise<{ added: string[]; error?: string; skipped?: string }> {
+  const r = await fetch("/distill", { method: "POST", headers: HDRS });
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error ?? `HTTP ${r.status}`);
+  return j;
+}
+
 /** POST /chat 후 SSE 스트림을 콜백으로 흘린다. done/error에서 종료. */
 export async function chat(
   text: string, sessionId: number | null,

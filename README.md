@@ -103,3 +103,22 @@ PORT=8798, `KAIROS_CLAUDE_CMD=tests/fakes/fake_argv_dump.py`로 provider 수신 
 | 6. DB에 저장되는 user 원문에는 주입 블록 미포함 | ✅ `/messages` 조회 결과 — user 텍스트 = "설교 이어서 다시" (원문 그대로), assistant 저장본(argv 덤프)에만 `[과거 대화 참고` 포함 |
 | 빌드/유닛 | ✅ `cd app && npm run build` clean, `.venv/bin/python -m pytest -q` 72 passed |
 | Chat.tsx 🧠 회상 표시 / Settings.tsx 학습 회상 토글 | GUI 확인: 사용자 수동 확인 대기 |
+
+## P3-2 검증 로그 (2026-07-20)
+
+규칙 증류 UI(`app/src/Settings.tsx` "학습된 규칙" 섹션: 미증류 건수 · [지금 증류] 버튼 · 규칙별 활성 체크박스)
++ headless 수용 실측 (temp `KAIROS_CONFIG_DIR`/`KAIROS_DATA_DIR`, `PORT=8799`,
+`KAIROS_CLAUDE_CMD`를 `tests/fakes/fake_distill_claude.py` ↔ `tests/fakes/fake_argv_dump.py`로 전환하며 3개
+사이드카를 순차 기동, 각각 `curl`로 검증 후 kill/`ps -p` 부재 확인 → `/tmp` 스크래치 삭제):
+
+| 완료 기준 | 방법 | 결과 |
+|---|---|---|
+| 1. correction 피드백 → `POST /distill` → `GET /rules`에 규칙 반영 | `/chat`으로 메시지 생성 → `/feedback {"kind":"correction"}` → `/distill` | ✅ `{"added": ["가운뎃점 대신 쉼표를 쓴다"]}`, 이후 `/rules`에 해당 규칙 등재(`active:true`) |
+| 2. 활성 규칙이 이후 `/chat` provider 프롬프트에 `[학습된 규칙` 주입 | `KAIROS_CLAUDE_CMD→fake_argv_dump.py`로 전환한 2번째 사이드카에서 재채팅, 저장된 assistant 메시지(argv 덤프) 확인 | ✅ 저장본에 `"[학습된 규칙 — 항상 준수]\n- 가운뎃점 대신 쉼표를 쓴다..."` 포함 |
+| 3. `POST /rules {"active":false}` 후 재채팅 → argv에 미포함 | 동일 사이드카에서 규칙 비활성화 후 같은 세션 재채팅 | ✅ 저장본에 `학습된 규칙` 블록 없음(`in` 검사 False), `[과거 대화 참고]`/`[사용자 교정 이력]`만 남음 |
+| 4. `FAKE_BAD=1` 사이드카로 `/distill` → added 0 + 규칙 불변 | 3번째 사이드카(`FAKE_BAD=1`)에서 correction 피드백 추가 후 `/distill` | ✅ `{"added": [], "error": "parse"}`, 이후 `/rules`가 직전과 동일(규칙 1개, `active:false` 그대로, `undistilled`만 1로 증가) |
+| 5. 미증류 피드백 임계치 도달 시 자동 증류 | Task 2 pytest 인용 (`test_server.py` threshold monkeypatch 케이스) | ✅ 동일 스위트 |
+| 빌드/유닛 | `cd app && npm run build`, `.venv/bin/python -m pytest -q` | ✅ 빌드 clean, 84 passed |
+
+**GUI: 사용자 수동 확인 대기** — Settings 화면의 "학습된 규칙" 섹션(미증류 건수 표시, [지금 증류] 버튼 클릭,
+규칙별 체크박스 토글)에 대한 실제 조작 확인은 이 세션에서 수행할 수 없어 보류.

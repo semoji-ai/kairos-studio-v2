@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { cliStatus, getSettings, putSettings, storageInfo, workspaceInfo } from "./api";
-import type { CliStatus, Settings as SettingsType, StorageInfo, WorkspaceInfo } from "./api";
+import { cliStatus, getRules, getSettings, putSettings, runDistill, setRuleActive, storageInfo, workspaceInfo } from "./api";
+import type { CliStatus, Rule, Settings as SettingsType, StorageInfo, WorkspaceInfo } from "./api";
 
 function badge(installed: boolean, authed: boolean | null): string {
   if (!installed) return "❌";
@@ -17,6 +17,15 @@ export default function Settings({ onClose }: { onClose: () => void }) {
   const [workspaceDirInput, setWorkspaceDirInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [rules, setRules] = useState<Rule[]>([]);
+  const [undistilled, setUndistilled] = useState(0);
+  const [distilling, setDistilling] = useState(false);
+  const [distillResult, setDistillResult] = useState<string | null>(null);
+  const [distillError, setDistillError] = useState<string | null>(null);
+
+  function refreshRules() {
+    getRules().then(r => { setRules(r.rules); setUndistilled(r.undistilled); });
+  }
 
   useEffect(() => {
     getSettings().then(s => {
@@ -27,7 +36,30 @@ export default function Settings({ onClose }: { onClose: () => void }) {
     cliStatus().then(setCli);
     storageInfo().then(setStorage);
     workspaceInfo().then(setWorkspace);
+    refreshRules();
   }, []);
+
+  async function doDistill() {
+    setDistilling(true); setDistillResult(null); setDistillError(null);
+    try {
+      const res = await runDistill();
+      if (res.error) {
+        setDistillError(res.error);
+      } else {
+        setDistillResult(`규칙 ${res.added.length}개 추가`);
+      }
+      refreshRules();
+    } catch (e) {
+      setDistillError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDistilling(false);
+    }
+  }
+
+  async function toggleRule(id: number, active: boolean) {
+    await setRuleActive(id, active);
+    refreshRules();
+  }
 
   async function save(patch: Partial<SettingsType>) {
     setSaving(true); setError(null);
@@ -169,6 +201,29 @@ export default function Settings({ onClose }: { onClose: () => void }) {
             </div>
           </>
         )}
+      </section>
+
+      <section style={{ margin: "16px 0" }}>
+        <h3>학습된 규칙</h3>
+        <div>미증류 피드백 {undistilled}건</div>
+        <div style={{ marginTop: 8 }}>
+          <button disabled={distilling} onClick={doDistill}>
+            {distilling ? "증류 중..." : "지금 증류"}
+          </button>
+          {distillResult && <span style={{ marginLeft: 8 }}>{distillResult}</span>}
+          {distillError && <span style={{ marginLeft: 8, color: "#991b1b" }}>{distillError}</span>}
+        </div>
+        <ul style={{ marginTop: 8, paddingLeft: 16 }}>
+          {rules.map(r => (
+            <li key={r.id} style={{ listStyle: "none", marginBottom: 4 }}>
+              <label>
+                <input type="checkbox" checked={!!r.active}
+                       onChange={e => toggleRule(r.id, e.target.checked)} />
+                {" "}{r.rule}
+              </label>
+            </li>
+          ))}
+        </ul>
       </section>
     </main>
   );
