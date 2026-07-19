@@ -18,6 +18,11 @@ def bigrams(text: str) -> str:
     return " ".join(tokens)
 
 
+def _normalize_whitespace(text: str) -> str:
+    """Collapse all whitespace runs (including newlines) to single spaces."""
+    return " ".join(text.split())
+
+
 def _truncate(text: str, n: int = 400) -> str:
     return text[:n]
 
@@ -34,6 +39,8 @@ def recall(store, query: str, current_session_id: int, limit: int = 3) -> dict:
     if not tokens:
         return empty
 
+    # Cap to first 64 bigram tokens to prevent unbounded FTS queries
+    tokens = tokens[:64]
     match_query = " OR ".join(f'"{t}"' for t in tokens)
 
     conn = store._conn()
@@ -80,7 +87,7 @@ def recall(store, query: str, current_session_id: int, limit: int = 3) -> dict:
         ).fetchone()
         if q_row is None:
             continue
-        q_text = _text_of(q_row["content_json"])
+        q_text = _normalize_whitespace(_text_of(q_row["content_json"]))
 
         a_row = conn.execute(
             "SELECT id, content_json FROM messages"
@@ -90,7 +97,7 @@ def recall(store, query: str, current_session_id: int, limit: int = 3) -> dict:
         ).fetchone()
         if a_row is None:
             continue
-        a_text = _text_of(a_row["content_json"])
+        a_text = _normalize_whitespace(_text_of(a_row["content_json"]))
         a_message_id = a_row["id"]
 
         fb = store.feedback_for_message(a_message_id)
