@@ -111,13 +111,14 @@ def recall(store, query: str, current_session_id: int, limit: int = 3) -> dict:
         pairs.append({
             "q_text": _truncate(q_text),
             "a_text": _truncate(a_text),
-            "date": q_row["id"] and _created_at(conn, mid),
+            "date": _created_at(conn, mid),
             "score": score,
+            "a_id": a_message_id,
         })
 
-    avoid = [p["a_text"] for p in pairs if p.get("_avoid")]
+    avoid = [p["a_text"] for p in pairs if p.get("_avoid")][:2]
     snippet_candidates = [p for p in pairs if not p.get("_avoid")]
-    snippet_candidates.sort(key=lambda p: p["score"], reverse=True)
+    snippet_candidates.sort(key=lambda p: (p["score"], p.get("a_id", 0)), reverse=True)
     snippets = snippet_candidates[:limit]
 
     # corrections: FTS 매칭 세션과 관련된 것 우선, 그다음 최근순으로 채워 최대 3건

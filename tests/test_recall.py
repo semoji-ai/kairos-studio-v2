@@ -70,3 +70,20 @@ def test_backfill_indexes_existing_messages(tmp_path):
     s2 = Store(db)  # 재오픈 = 백필 경로 실행
     out = recall(s2, "레오파드", current_session_id=999)
     assert len(out["snippets"]) == 1  # 중복 색인 없음
+
+def test_avoid_capped_at_two(store):
+    for i in range(4):
+        s = store.create_session(f"s{i}")
+        mid = _conv(store, s, f"썸네일 스타일 문의 {i}", f"거부된 답변 {i}")
+        store.add_feedback(mid, "down")
+    out = recall(store, "썸네일 스타일", current_session_id=999)
+    assert len(out["avoid"]) == 2
+
+
+def test_recency_tiebreak_prefers_newer(store):
+    s1 = store.create_session("old")
+    _conv(store, s1, "레오파드 렌더 질문", "옛날 답변")
+    s2 = store.create_session("new")
+    _conv(store, s2, "레오파드 렌더 질문", "최신 답변")
+    out = recall(store, "레오파드 렌더", current_session_id=999)
+    assert out["snippets"][0]["a_text"] == "최신 답변"
