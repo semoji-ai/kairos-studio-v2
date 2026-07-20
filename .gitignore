@@ -10,3 +10,7 @@ src-tauri/resources/*
 data/
 .pytest_cache/
 .superpowers/
+# Bible data and knowledge base
+bible_data/
+_bible_raw/
+bible_documents.db
