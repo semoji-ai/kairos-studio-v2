@@ -3,7 +3,8 @@ import json
 import sys
 
 def emit(o):
-    sys.stdout.write(json.dumps(o, ensure_ascii=False) + "\n")
+    sys.stdout.write(json.dumps(o) + "\n")
+    sys.stdout.flush()
 
 argv = sys.argv[1:]
 if "exec" in argv:  # codex 모드

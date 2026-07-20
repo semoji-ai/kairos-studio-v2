@@ -1,6 +1,8 @@
 import sys
 from pathlib import Path
 import json as _json
+import io
+import subprocess
 
 FAKE = Path(__file__).parent / "fakes" / "fake_claude.py"
 FAKE_ARGV = Path(__file__).parent / "fakes" / "fake_argv_dump.py"
@@ -50,6 +52,37 @@ def test_permission_mode_default_without_cfg(monkeypatch):
     done = list(claude.chat("hi"))[-1]
     argv = _json.loads(done["text"])
     assert argv[argv.index("--permission-mode") + 1] == "default"
+
+
+def test_model_is_opus_4_8(monkeypatch):
+    monkeypatch.setenv("KAIROS_CLAUDE_CMD", f"{sys.executable} {FAKE_ARGV}")
+    from core.providers import claude
+    done = list(claude.chat("hi"))[-1]
+    argv = _json.loads(done["text"])
+    assert argv[argv.index("--model") + 1] == "claude-opus-4-8"
+
+
+def test_windows_subprocess_has_no_console_window(monkeypatch):
+    from core.providers import claude
+    captured = {}
+
+    class FakeProc:
+        stdout = io.StringIO(
+            '{"type":"result","subtype":"success","result":"ok","session_id":"s"}\n')
+        stderr = io.StringIO("")
+
+        def wait(self, timeout=None):
+            return 0
+
+    def fake_popen(cmd, **kwargs):
+        captured.update(kwargs)
+        return FakeProc()
+
+    monkeypatch.setattr(claude, "_base_cmd", lambda: ["claude"])
+    monkeypatch.setattr(claude.subprocess, "Popen", fake_popen)
+    assert list(claude.chat("hi"))[-1]["type"] == "done"
+    if claude.os.name == "nt":
+        assert captured["creationflags"] == subprocess.CREATE_NO_WINDOW
 
 
 def test_workspace_dir_sets_cwd(monkeypatch, tmp_path):

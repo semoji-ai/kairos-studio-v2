@@ -28,6 +28,7 @@ def chat(prompt: str, session_ref: str | None = None,
         "-p", prompt,
         "--output-format", "stream-json",
         "--verbose",
+        "--model", "claude-opus-4-8",
         "--include-partial-messages",
         "--permission-mode", mode,  # 안전: 비대화 모드에서 위험 툴 거부
     ]
@@ -35,6 +36,7 @@ def chat(prompt: str, session_ref: str | None = None,
         cmd += ["--resume", session_ref]
     ws = (cfg or {}).get("workspace_dir")
     popen_kwargs = {
+        "stdin": subprocess.DEVNULL,  # 사이드카 watchdog stdin 파이프 상속 차단
         "stdout": subprocess.PIPE,
         "stderr": subprocess.PIPE,
         "encoding": "utf-8",
@@ -42,6 +44,8 @@ def chat(prompt: str, session_ref: str | None = None,
     }
     if ws:
         popen_kwargs["cwd"] = str(Path(ws).expanduser())
+    if os.name == "nt":
+        popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
     try:
         proc = subprocess.Popen(cmd, **popen_kwargs)
     except OSError as exc:
@@ -70,11 +74,20 @@ def chat(prompt: str, session_ref: str | None = None,
             final_text = msg.get("result") or final_text
             session_id = msg.get("session_id", session_id)
             got_result = True
-    code = proc.wait()
+            # result가 최종 이벤트다. Windows 실측: CLI가 result 후에도
+            # 종료하지 않고 머무는 경우가 있어 EOF를 기다리면 영구 행 —
+            # 즉시 루프를 끊고 아래에서 프로세스를 정리한다.
+            break
     if not got_result:
+        code = proc.wait()
         err = (proc.stderr.read() if proc.stderr else "").strip()
         yield {"type": "error",
                "error": f"claude exited {code} without result: {err[:500]}"}
         return
+    try:
+        proc.wait(timeout=3)  # 자연 종료 유예
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
     yield {"type": "done", "text": final_text,
            "session_ref": session_id, "model": model}

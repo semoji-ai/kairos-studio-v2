@@ -41,3 +41,25 @@ def test_sessions_isolated(store):
     b = store.create_session("b")
     store.add_message(a, "user", [{"type": "text", "text": "1"}])
     assert store.list_messages(b) == []
+
+
+def test_delete_session_removes_messages_feedback_fts(store):
+    sid = store.create_session("삭제 대상")
+    mid = store.add_message(sid, "user", [{"type": "text", "text": "안녕 세상"}])
+    store.add_message(sid, "assistant", [{"type": "text", "text": "응답"}])
+    store.add_feedback(mid, "up")
+    keep = store.create_session("보존 세션")
+    keep_mid = store.add_message(keep, "user", [{"type": "text", "text": "남는다"}])
+
+    assert store.delete_session(sid) is True
+    assert [s["id"] for s in store.list_sessions()] == [keep]
+    assert store.list_messages(sid) == []
+    assert store.feedback_for_message(mid) == []
+    with store._conn() as c:
+        rows = c.execute("SELECT session_id FROM messages_fts").fetchall()
+    assert {r["session_id"] for r in rows} == {keep}
+    assert store.list_messages(keep)[0]["id"] == keep_mid
+
+
+def test_delete_session_missing_returns_false(store):
+    assert store.delete_session(9999) is False

@@ -23,7 +23,8 @@ pub struct ServerInfo {
     pub token: String,
 }
 
-/// `base` is repo_root in dev, Tauri's resource_dir() in release.
+/// `base` is repo_root in dev, `resource_dir()/resources` (where the bundle
+/// stages python-embed) in release.
 /// - dev: existing `.venv` (Unix `.venv/bin/python`, Windows `.venv\Scripts\python.exe`)
 /// - release Windows: bundled embeddable interpreter at `base/python-embed/python.exe`
 /// - release Unix (macOS): the system `python3` (stdlib-only sidecar needs nothing else)

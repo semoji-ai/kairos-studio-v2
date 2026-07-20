@@ -50,11 +50,16 @@ pub fn resolve_paths_for(repo_root: &Path, resource_dir: Option<&Path>, dev: boo
         }
     } else {
         let base = resource_dir.expect("resource_dir required in release builds");
+        // tauri.release.conf.json maps every bundled file under
+        // `resource_dir()/resources/` (core, dist, publish_agent.zip,
+        // python-embed), so all release paths — including the bundle dir the
+        // sidecar reads publish_agent.zip from — hang off that subdirectory.
+        let res = base.join("resources");
         ResolvedPaths {
-            python: sidecar::python_path(base, sidecar::Os::current(), true),
-            core_dir: base.join("resources").join("core"),
-            static_dir: base.join("resources").join("dist"),
-            bundle_dir: base.to_path_buf(),
+            python: sidecar::python_path(&res, sidecar::Os::current(), true),
+            core_dir: res.join("core"),
+            static_dir: res.join("dist"),
+            bundle_dir: res,
         }
     }
 }
@@ -307,7 +312,17 @@ mod tests {
         let paths = resolve_paths_for(root, Some(resource_dir), false);
         assert_eq!(paths.core_dir, resource_dir.join("resources").join("core"));
         assert_eq!(paths.static_dir, resource_dir.join("resources").join("dist"));
-        assert_eq!(paths.bundle_dir, resource_dir.to_path_buf());
+        // publish_agent.zip is bundled under resources/, so the bundle dir the
+        // sidecar receives must point there too.
+        assert_eq!(paths.bundle_dir, resource_dir.join("resources"));
+        // python comes from Os::current(): bundled python-embed on Windows,
+        // system python3 elsewhere.
+        #[cfg(windows)]
+        assert_eq!(
+            paths.python,
+            resource_dir.join("resources").join("python-embed").join("python.exe")
+        );
+        #[cfg(not(windows))]
         assert_eq!(paths.python, PathBuf::from("/usr/bin/python3"));
     }
 

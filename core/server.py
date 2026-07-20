@@ -12,7 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from core import providers, settings, setup
+from core import bible_coverage, documents, providers, settings, setup
 from core.artifacts import collect
 from core.distill import distill
 from core.recall import recall
@@ -36,12 +36,20 @@ def build_prompt(text: str, rec: dict) -> tuple[str, int]:
     avoid = list(rec.get("avoid") or [])
     corrections = list(rec.get("corrections") or [])
     rules = list(rec.get("rules") or [])
+    bible_refs = list(rec.get("bible_refs") or [])
 
-    def render_block(snips: list[dict], rls: list[str]) -> str:
+    def render_block(snips: list[dict], rls: list[str], refs: list[dict]) -> str:
         blocks = []
         if rls:
             lines = "\n".join(f"- {r}" for r in rls)
             blocks.append(f"[학습된 규칙 — 항상 준수]\n{lines}")
+        if refs:
+            # 원전분해 등 대용량 항목이 프롬프트를 오염시키지 않게 항목당 길이 제한
+            lines = "\n".join(
+                f"[{r.get('reference', '')}] {str(r.get('content', ''))[:180]}"
+                for r in refs[:3]
+            )
+            blocks.append(f"[성경 자료 검색 — 관련 구절]\n{lines}")
         if snips:
             lines = "\n".join(
                 f"({s.get('date', '')}) Q: {s.get('q_text', '')} A: {s.get('a_text', '')}"
@@ -58,15 +66,19 @@ def build_prompt(text: str, rec: dict) -> tuple[str, int]:
             return ""
         return "\n\n".join(blocks)
 
-    block = render_block(snippets, rules)
+    block = render_block(snippets, rules, bible_refs)
     while block and len(block) > _INJECT_BUDGET and snippets:
         snippets = snippets[:-1]
-        block = render_block(snippets, rules)
+        block = render_block(snippets, rules, bible_refs)
     # 스니펫을 다 줄여도 여전히 캡 초과면 규칙을 오래된 것부터(리스트 끝) 줄인다.
     # store.list_rules()는 id 내림차순(최신 우선)이므로 끝을 자르면 최신이 남는다.
     while block and len(block) > _INJECT_BUDGET and rules:
         rules = rules[:-1]
-        block = render_block(snippets, rules)
+        block = render_block(snippets, rules, bible_refs)
+    # 마지막으로 성경 자료도 필요시 줄인다.
+    while block and len(block) > _INJECT_BUDGET and bible_refs:
+        bible_refs = bible_refs[:-1]
+        block = render_block(snippets, rules, bible_refs)
 
     if not block:
         return text, 0
@@ -221,9 +233,17 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
             # 인증은 API 라우트에만. 그 외 경로는 Task 8에서 정적 서빙이 된다
             # (토큰이 index.html 주입으로 전달되므로 정적은 인증 불가/불요).
             if u.path in ("/sessions", "/messages", "/settings", "/storage", "/cli/status",
-                          "/workspace/info", "/rules", "/setup/status"):
+                          "/workspace/info", "/rules", "/setup/status", "/bible/coverage"):
                 if not self._authed():
                     return self._send(401, {"error": "unauthorized"})
+                if u.path == "/bible/coverage":
+                    ws = settings.load().get("workspace_dir")
+                    if not ws:
+                        return self._send(200, {"books": [], "error": "workspace not set"})
+                    try:
+                        return self._send(200, bible_coverage.coverage(ws))
+                    except Exception as exc:
+                        return self._send(500, {"error": f"coverage failed: {exc}"})
                 if u.path == "/rules":
                     store = state["store"]
                     return self._send(200, {"rules": store.list_rules(active_only=False),
@@ -444,6 +464,23 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
                 return self._put_settings(body)
             return self._send(404, {"error": "not found"})
 
+        def do_DELETE(self):
+            if not self._host_ok():
+                return self._send(403, {"error": "forbidden host"})
+            if not self._authed():
+                return self._send(401, {"error": "unauthorized"})
+            u = urlparse(self.path)
+            if u.path == "/sessions":
+                q = parse_qs(u.query)
+                try:
+                    sid = int(q.get("id", [""])[0])
+                except ValueError:
+                    return self._send(400, {"error": "bad id"})
+                if not state["store"].delete_session(sid):
+                    return self._send(404, {"error": "session not found"})
+                return self._send(200, {"ok": True})
+            return self._send(404, {"error": "not found"})
+
         def _put_settings(self, patch: dict):
             try:
                 settings._validate(patch)
@@ -510,15 +547,35 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
                 rec = recall(store, text, session_id)
                 rec["rules"] = [r["rule"].replace("\n", " ").strip()
                                 for r in store.list_rules(active_only=True)]
+                # Search Bible knowledge base — 인사말 수준의 짧은 입력에는
+                # 주입하지 않는다 (무관한 구절이 맥락을 오염시키는 것 방지)
+                bible_db = Path(__file__).parent.parent / "bible_documents.db"
+                if bible_db.exists() and len(cleaned) >= 8:
+                    try:
+                        bible_refs = documents.search(bible_db, text, limit=3)
+                        rec["bible_refs"] = bible_refs
+                    except Exception:
+                        rec["bible_refs"] = []
                 prompt, n_recalled = build_prompt(cleaned, rec)
             else:
                 prompt, n_recalled = cleaned, 0
+
+            # 결정적 성경 본문 주입: 입력에 "로마서 8:1-4" 같은 참조가 있으면
+            # LLM 기억이 아니라 로컬 베들레헴 DB에서 기계적으로 조회해 첨부한다.
+            ws_for_bible = cfg.get("workspace_dir")
+            if ws_for_bible:
+                try:
+                    vb = bible_coverage.verses_block(ws_for_bible, text)
+                except Exception:
+                    vb = ""
+                if vb:
+                    prompt = f"{vb}\n\n{prompt}"
 
             self._sse_start()
             final = None
             try:
                 for ev in providers.get(provider_name).chat(prompt, session_ref=session_ref, cfg=cfg):
-                    if ev["type"] == "delta":
+                    if ev["type"] in ("delta", "progress"):
                         self._sse(ev)
                     elif ev["type"] == "error":
                         self._sse(ev)
@@ -527,10 +584,15 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
                         final = ev
             except BrokenPipeError:
                 return  # 클라이언트가 끊음: 저장은 아래서 final 있을 때만
+            except Exception:
+                self._sse({"type": "error", "error": "provider failed"})
+                return
             if final is None:
                 self._sse({"type": "error", "error": "provider ended without done"})
                 return
             content = [{"type": "text", "text": final["text"]}]
+            if final.get("log"):
+                content.append({"type": "log", "text": final["log"]})
             if final.get("session_ref"):
                 content.append({"type": "meta", "session_ref": final["session_ref"]})
             mid = store.add_message(session_id, "assistant", content,

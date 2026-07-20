@@ -85,12 +85,20 @@ def _bigrams(text: str, max_tokens: int = 64) -> str:
     if not tokens:
         return ""
 
-    bigrams = []
+    # FTS5 unicode61 인덱스는 어절 단위 통짜 토큰이라 순수 바이그램은 매치되지
+    # 않는다 ("요한복음" 토큰 vs "요한" 쿼리). 접두사 질의(토큰* / 바이그램*)로
+    # 부분 일치를 잡는다.
+    terms = []
+    seen = set()
     for token in tokens:
-        for i in range(len(token) - 1):
-            bigrams.append(token[i:i+2])
+        if len(token) < 2:  # 한 글자 토큰은 기존 계약대로 검색어를 만들지 않는다
+            continue
+        for cand in [token] + [token[i:i + 2] for i in range(len(token) - 1)]:
+            if cand not in seen:
+                seen.add(cand)
+                terms.append(f'"{cand}"*')
 
-    return " OR ".join(bigrams) if bigrams else ""
+    return " OR ".join(terms) if terms else ""
 
 
 def ingest_bible_text(db_path: Path, bible_data_dir: Path) -> int:
@@ -215,6 +223,159 @@ def ingest_mybible_text(db_path: Path, bible_data_dir: Path) -> int:
     return record_count
 
 
+def ingest_commentary(db_path: Path, bible_data_dir: Path) -> int:
+    """
+    Ingest commentary and dictionary data from extracted JSONL files.
+    Includes: MyBible dicword/dicman/kwanju2, Bethlehem .dct lexicon, detailed maps metadata.
+    Returns count of records added.
+    """
+    conn = create_db(db_path)
+    cursor = conn.cursor()
+
+    record_count = 0
+    search_dirs = [
+        (bible_data_dir / "mybible", "mybible"),
+        (bible_data_dir / "bethlehem_commentary", "bethel"),
+    ]
+
+    for search_dir, source_prefix in search_dirs:
+        if not search_dir.exists():
+            continue
+
+        log.info(f"Ingesting commentary from {search_dir}")
+
+        for jsonl_file in sorted(search_dir.glob("*.jsonl")):
+            data_type = jsonl_file.stem  # e.g., mybible_dicword, bethel_HebGrkKo_Lexicon
+
+            with open(jsonl_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    try:
+                        record = json.loads(line)
+                        # Generate unique ID
+                        doc_id = f"{source_prefix}_{data_type}_{record.get('id', hash(str(record)))}"
+
+                        # Extract reference and content based on record type
+                        if "dicword" in data_type:
+                            reference = record.get('word', '')
+                            content = record.get('mean', '')
+                            doc_type = "dictionary"
+                        elif "dicman" in data_type:
+                            reference = record.get('item', '')
+                            content = f"{record.get('eng', '')} / {record.get('means', '')}"
+                            doc_type = "dictionary"
+                        elif "kwanju2" in data_type:
+                            reference = f"kwanju_{record.get('jj', '')}"
+                            content = record.get('ct', '')
+                            doc_type = "cross_reference"
+                        elif "Lexicon" in data_type:
+                            reference = record.get('scode', '')
+                            content = record.get('dtext', '')
+                            doc_type = "lexicon"
+                        else:
+                            reference = str(record.get('reference', ''))
+                            content = str(record.get('content', ''))
+                            doc_type = "commentary"
+
+                        if not content or not reference:
+                            continue
+
+                        cursor.execute("""
+                            INSERT OR REPLACE INTO documents
+                            (id, source, type, reference, content, path)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                        """, (
+                            doc_id,
+                            source_prefix,
+                            doc_type,
+                            reference[:500],  # Limit reference length
+                            content[:8000],   # Limit content length
+                            str(jsonl_file)
+                        ))
+
+                        cursor.execute("""
+                            INSERT INTO documents_fts (rowid, reference, content)
+                            SELECT rowid, reference, content FROM documents WHERE id = ?
+                        """, (doc_id,))
+
+                        record_count += 1
+
+                        if record_count % 10000 == 0:
+                            log.debug(f"  ... ingested {record_count} commentary records")
+
+                    except Exception as e:
+                        log.error(f"Error ingesting commentary record: {e}")
+                        continue
+
+    conn.commit()
+    conn.close()
+    log.info(f"  ✓ Ingested {record_count} commentary/dictionary/lexicon records")
+    return record_count
+
+
+def ingest_maps_detailed(db_path: Path, bible_data_dir: Path) -> int:
+    """
+    Ingest detailed Bible maps metadata with tags and descriptions.
+    Returns count of records added.
+    """
+    conn = create_db(db_path)
+    cursor = conn.cursor()
+
+    maps_dir = bible_data_dir / "maps"
+    maps_index_file = maps_dir / "maps_detailed_index.jsonl"
+
+    if not maps_index_file.exists():
+        log.warning(f"Detailed maps index not found: {maps_index_file}")
+        return 0
+
+    log.info(f"Ingesting detailed maps metadata from {maps_index_file}")
+
+    record_count = 0
+    try:
+        with open(maps_index_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                try:
+                    record = json.loads(line)
+                    doc_id = f"map_detailed_{record['id']}"
+                    reference = record.get('title', record.get('filename', ''))
+                    # Combine title, tags, and filename for searchability
+                    tags_str = ' '.join(record.get('tags', []))
+                    content = f"{reference} {tags_str}"
+                    path = record.get('path', '')
+
+                    cursor.execute("""
+                        INSERT OR REPLACE INTO documents
+                        (id, source, type, reference, content, path)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, (
+                        doc_id,
+                        "maps",
+                        "map_detailed",
+                        reference,
+                        content,
+                        path
+                    ))
+
+                    cursor.execute("""
+                        INSERT INTO documents_fts (rowid, reference, content)
+                        SELECT rowid, reference, content FROM documents WHERE id = ?
+                    """, (doc_id,))
+
+                    record_count += 1
+
+                except Exception as e:
+                    log.error(f"Error ingesting detailed map: {e}")
+                    continue
+
+    except Exception as e:
+        log.error(f"Error reading maps index: {e}")
+        return 0
+
+    conn.commit()
+    conn.close()
+    log.info(f"  ✓ Ingested {record_count} detailed map entries")
+    return record_count
+
+
 def ingest_maps(db_path: Path, bible_data_dir: Path) -> int:
     """Ingest Bible map index so they're searchable by title/keywords."""
     conn = create_db(db_path)
@@ -325,14 +486,22 @@ def populate_knowledge_base(db_path: Path, bible_data_dir: Path) -> dict:
     # Ingest MyBible texts
     mybible_count = ingest_mybible_text(db_path, bible_data_dir)
 
-    # Ingest maps
+    # Ingest maps (basic)
     maps_count = ingest_maps(db_path, bible_data_dir)
+
+    # Ingest commentary and dictionary data
+    commentary_count = ingest_commentary(db_path, bible_data_dir)
+
+    # Ingest detailed maps metadata
+    maps_detailed_count = ingest_maps_detailed(db_path, bible_data_dir)
 
     summary = {
         "bethel_verses": bible_count,
         "mybible_verses": mybible_count,
+        "mybible_commentary": commentary_count,
         "maps": maps_count,
-        "total": bible_count + mybible_count + maps_count,
+        "maps_detailed": maps_detailed_count,
+        "total": bible_count + mybible_count + maps_count + commentary_count + maps_detailed_count,
         "db_path": str(db_path)
     }
 
@@ -340,7 +509,9 @@ def populate_knowledge_base(db_path: Path, bible_data_dir: Path) -> dict:
     log.info(f"Knowledge Base Summary:")
     log.info(f"  Bethlehem Bible verses: {bible_count:,}")
     log.info(f"  MyBible verses: {mybible_count:,}")
-    log.info(f"  Maps: {maps_count}")
+    log.info(f"  MyBible commentary/dictionary: {commentary_count:,}")
+    log.info(f"  Maps (basic): {maps_count}")
+    log.info(f"  Maps (detailed): {maps_detailed_count}")
     log.info(f"  Total indexed: {summary['total']:,}")
     log.info(f"  Database: {db_path}")
     log.info("=" * 60)

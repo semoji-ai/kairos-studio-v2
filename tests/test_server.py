@@ -85,6 +85,19 @@ def test_chat_routes_code_to_codex(srv):
     assert ev[-1]["provider"] == "codex"
 
 
+def test_codex_progress_is_collapsible_log_not_answer(srv):
+    url, store = srv
+    ev = _sse_events(_req(url, "/chat", {"text": "@codex 테스트"}))
+    progress = [e["text"] for e in ev if e["type"] == "progress"]
+    deltas = [e["text"] for e in ev if e["type"] == "delta"]
+    done = ev[-1]
+    assert progress == ["checking sources"]
+    msgs = store.list_messages(done["session_id"])
+    content = msgs[-1]["content"]
+    assert next(p["text"] for p in content if p["type"] == "text") == "".join(deltas)
+    assert next(p["text"] for p in content if p["type"] == "log") == "".join(progress)
+
+
 def test_chat_resumes_same_provider(srv):
     url, store = srv
     first = _sse_events(_req(url, "/chat", {"text": "안녕"}))[-1]

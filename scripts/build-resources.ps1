@@ -69,5 +69,9 @@ if ($ActualSha256.ToUpper() -ne $PySha256.ToUpper()) {
 }
 Expand-Archive -Path $PyZipPath -DestinationPath $PyEmbedDest -Force
 Remove-Item -Force $PyZipPath
+# The embeddable distro's ._pth pins sys.path to the python-embed dir only
+# (cwd and PYTHONPATH are ignored), so `python -m core` can't see the sibling
+# core/ package. Add the parent resources dir to sys.path.
+Add-Content -Path (Join-Path $PyEmbedDest "python312._pth") -Value ".." -Encoding ascii
 
 Write-Host "==> Done. Resources staged at $ResourcesDir"

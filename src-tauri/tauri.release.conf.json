@@ -1,7 +1,9 @@
 {
   "bundle": {
     "active": true,
+    "icon": ["icons/icon.ico", "icons/icon.png"],
     "resources": {
+      "../bible_documents.db": "resources/bible_documents.db",
       "resources/core": "resources/core",
       "resources/dist": "resources/dist",
       "resources/publish_agent.zip": "resources/publish_agent.zip",

@@ -14,3 +14,7 @@ data/
 bible_data/
 _bible_raw/
 bible_documents.db
+
+# 테스트 산출물 DB (재생성 가능, 대용량)
+test_bible_kb.db
+test_documents.db

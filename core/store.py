@@ -88,6 +88,25 @@ class Store:
             cur = c.execute("INSERT INTO sessions(title) VALUES (?)", (title,))
             return cur.lastrowid
 
+    def delete_session(self, session_id: int) -> bool:
+        """세션과 그에 속한 메시지·피드백·FTS 색인을 함께 삭제한다.
+
+        존재하지 않는 세션이면 False. 학습 규칙(learned_rules)은 이미 증류된
+        결과물이므로 남긴다.
+        """
+        with self._conn() as c:
+            row = c.execute("SELECT id FROM sessions WHERE id=?",
+                            (session_id,)).fetchone()
+            if row is None:
+                return False
+            c.execute("DELETE FROM feedback WHERE message_id IN"
+                      " (SELECT id FROM messages WHERE session_id=?)",
+                      (session_id,))
+            c.execute("DELETE FROM messages_fts WHERE session_id=?", (session_id,))
+            c.execute("DELETE FROM messages WHERE session_id=?", (session_id,))
+            c.execute("DELETE FROM sessions WHERE id=?", (session_id,))
+            return True
+
     def list_sessions(self) -> list[dict]:
         rows = self._conn().execute(
             "SELECT id, title, created_at FROM sessions ORDER BY id DESC"

@@ -14,6 +14,7 @@ export type Msg = {
 export type Session = { id: number; title: string; created_at: string };
 export type ChatEvent =
   | { type: "delta"; text: string }
+  | { type: "progress"; text: string }
   | { type: "done"; message_id: number; session_id: number; provider: string; recalled?: number; artifacts?: number }
   | { type: "error"; error: string };
 
@@ -30,6 +31,25 @@ export async function listSessions(): Promise<Session[]> {
 export async function listMessages(sessionId: number): Promise<Msg[]> {
   const r = await fetch(`/messages?session_id=${sessionId}`, { headers: HDRS });
   return (await r.json()).messages;
+}
+
+export async function deleteSession(sessionId: number): Promise<void> {
+  const r = await fetch(`/sessions?id=${sessionId}`, { method: "DELETE", headers: HDRS });
+  if (!r.ok) throw new Error((await r.json()).error ?? `HTTP ${r.status}`);
+}
+
+export type BibleSermonRef = { title: string; date: string; article: string; passage: string };
+export type BibleChapter = {
+  n: number; verses: number; ranges: [number, number][]; sermons: BibleSermonRef[];
+};
+export type BibleBook = {
+  num: number; name: string; chapters: BibleChapter[];
+  covered_chapters: number; total_chapters: number;
+};
+export async function bibleCoverage(): Promise<{ books: BibleBook[] }> {
+  const r = await fetch("/bible/coverage", { headers: HDRS });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
 }
 
 export async function sendFeedback(messageId: number, kind: "up" | "down"): Promise<void> {
