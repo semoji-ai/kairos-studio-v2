@@ -17,22 +17,39 @@ if "app-server" in sys.argv:
             resumed = msg.get("method") == "thread/resume"
             emit({"id": 1, "result": {"thread": {"id": "th-123"}}})
         elif msg.get("id") == 2:
-            emit({"method": "item/started", "params": {"item": {
+            emit({"id": 2, "result": {"turn": {"id": "turn-1"}}})
+            # A child agent completes first. The provider must not expose its text
+            # or treat its turn/completed notification as the parent completion.
+            emit({"method": "item/started", "params": {
+                "threadId": "child-th", "turnId": "child-turn", "item": {
+                    "id": "child-item", "type": "agentMessage", "phase": "final_answer"}}})
+            emit({"method": "item/agentMessage/delta", "params": {
+                "threadId": "child-th", "turnId": "child-turn",
+                "itemId": "child-item", "delta": "CHILD S1"}})
+            emit({"method": "turn/completed", "params": {
+                "threadId": "child-th",
+                "turn": {"id": "child-turn", "status": "completed"}}})
+            emit({"method": "item/started", "params": {
+                "threadId": "th-123", "turnId": "turn-1", "item": {
                 "id": "log-1", "type": "agentMessage", "phase": "commentary"}}})
             emit({"method": "item/agentMessage/delta", "params": {
+                "threadId": "th-123", "turnId": "turn-1",
                 "itemId": "log-1", "delta": "checking sources"}})
-            emit({"method": "item/completed", "params": {"item": {
+            emit({"method": "item/completed", "params": {
+                "threadId": "th-123", "turnId": "turn-1", "item": {
                 "id": "log-1", "type": "agentMessage", "phase": "commentary",
                 "text": "checking sources"}}})
             text = ("[resumed]" if resumed else "") + "肄붾뱶 ?뺤씤 ?꾨즺"
-            emit({"method": "item/started", "params": {"item": {
+            emit({"method": "item/started", "params": {
+                "threadId": "th-123", "turnId": "turn-1", "item": {
                 "id": "item-1", "type": "agentMessage", "phase": "final_answer"}}})
             middle = max(1, len(text) // 2)
             for delta in (text[:middle], text[middle:]):
                 emit({"method": "item/agentMessage/delta", "params": {
                     "threadId": "th-123", "turnId": "turn-1",
                     "itemId": "item-1", "delta": delta}})
-            emit({"method": "item/completed", "params": {"item": {
+            emit({"method": "item/completed", "params": {
+                "threadId": "th-123", "turnId": "turn-1", "item": {
                 "id": "item-1", "type": "agentMessage", "phase": "final_answer",
                 "text": text}}})
             emit({"method": "turn/completed", "params": {

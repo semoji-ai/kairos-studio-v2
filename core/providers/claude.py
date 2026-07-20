@@ -9,6 +9,18 @@ from pathlib import Path
 from typing import Iterator
 
 
+# 워크스페이스의 읽기 전용 준비 스크립트만 사전 허용한다. 와일드카드는 인자에만
+# 걸리므로 목록 밖 명령(rm, git push 등)은 여전히 권한 프롬프트/거부 대상이다.
+_ALLOWED_TOOLS = [
+    "Bash(py -3 tools/bible_lookup.py:*)",
+    "Bash(python tools/bible_lookup.py:*)",
+    "Bash(py -3 skills/shared/scripts/verify_sermon.py:*)",
+    "Bash(python skills/shared/scripts/verify_sermon.py:*)",
+    "Bash(py -3 skills/shared/scripts/sermon_fingerprint.py:*)",
+    "Bash(python skills/shared/scripts/sermon_fingerprint.py:*)",
+]
+
+
 def _base_cmd() -> list[str] | None:
     override = os.environ.get("KAIROS_CLAUDE_CMD")
     if override:
@@ -32,6 +44,11 @@ def chat(prompt: str, session_ref: str | None = None,
         "--include-partial-messages",
         "--permission-mode", mode,  # 안전: 비대화 모드에서 위험 툴 거부
     ]
+    # 헤드리스에서는 권한 프롬프트에 답할 수 없어 워크스페이스 도구 실행이
+    # 막힌다. 설교 준비에 필요한 읽기 전용 스크립트만 사전 허용한다
+    # (임의 셸 명령은 여전히 거부 — 목록에 있는 스크립트로 한정).
+    for spec in _ALLOWED_TOOLS:
+        cmd += ["--allowedTools", spec]
     if session_ref:
         cmd += ["--resume", session_ref]
     ws = (cfg or {}).get("workspace_dir")

@@ -18,6 +18,7 @@ def test_streams_deltas_then_done(monkeypatch):
     progress = [e["text"] for e in ev if e["type"] == "progress"]
     deltas = [e["text"] for e in ev if e["type"] == "delta"]
     assert progress == ["checking sources"]
+    assert all("CHILD S1" not in e.get("text", "") for e in ev)
     assert len(deltas) == 2
     assert ev[-1]["type"] == "done"
     assert ev[-1]["text"] == "".join(deltas)

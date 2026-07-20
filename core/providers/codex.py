@@ -67,6 +67,7 @@ def chat(prompt: str, session_ref: str | None = None,
     phase_by_item: dict[str, str] = {}
     streamed_items: set[str] = set()
     thread_id: str | None = None
+    turn_id: str | None = None
     turn_started = False
     try:
         _send(proc, {"method": "initialize", "id": 0, "params": {
@@ -100,12 +101,23 @@ def chat(prompt: str, session_ref: str | None = None,
                     "model": MODEL, "effort": REASONING_EFFORT, "cwd": cwd}})
                 turn_started = True
                 continue
-            if msg.get("id") == 2 and msg.get("error"):
-                yield {"type": "error", "error": f"codex turn failed: {msg['error']}"}
-                return
+            if msg.get("id") == 2:
+                if msg.get("error"):
+                    yield {"type": "error", "error": f"codex turn failed: {msg['error']}"}
+                    return
+                turn_id = ((msg.get("result") or {}).get("turn") or {}).get("id")
+                continue
 
             method = msg.get("method")
             params = msg.get("params") or {}
+            event_thread_id = params.get("threadId")
+            event_turn_id = params.get("turnId") or (params.get("turn") or {}).get("id")
+            # app-server multiplexes parent and subagent notifications on the same
+            # stdout stream. Only the root turn belongs in this chat response.
+            if event_thread_id and event_thread_id != thread_id:
+                continue
+            if turn_id and event_turn_id and event_turn_id != turn_id:
+                continue
             if method == "item/started":
                 item = params.get("item") or {}
                 if item.get("type") == "agentMessage" and item.get("id"):
