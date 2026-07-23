@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from core import server
 from core.store import Store
-from core.settings import _DEFAULT_SETTINGS
+from core.settings import DEFAULTS
 
 # Minimal test
 def test_build_prompt():

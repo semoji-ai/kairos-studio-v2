@@ -70,3 +70,24 @@ TASKS=tasks.jsonl OUTDIR=./out SANDBOX=read-only \
 **DB**: `bible_documents.db`
 
 **참고**: 외부 API 없이 모두 로컬에서 처리 (구독 Claude CLI만 사용)
+
+---
+
+## 크로스머신(맥·윈도우) 작업 규약
+
+한 리포·한 main. **OS별 브랜치 금지** — 플랫폼 차이는 코드/마커로 처리한다.
+
+1. **테스트**: 공용 테스트는 `tests/`에만 (pytest는 `pyproject.toml`의
+   `testpaths=["tests"]`로 여기만 수집). 환경 의존 테스트는
+   `pytest.mark.skipif(sys.platform != "win32", ...)` 식으로 스킵 처리 —
+   어느 머신에서든 `pytest` 한 방이 항상 그린이어야 한다.
+2. **scripts/ = 로컬 스크립트**: pytest 수집 대상 아님. 일회성 추출·검증
+   스크립트는 여기에. 하드코딩 경로가 필요하면 env 오버라이드를 열어둘 것
+   (예: `KAIROS_BIBLE_MDB`), 없으면 명확한 에러 메시지.
+3. **경로**: 공용 코드(core/, app/, src-tauri/)에 `C:\...`·`/Users/...`
+   하드코딩 금지. 데이터 위치는 settings/env로.
+4. **작업 흐름**: 시작 전 `git pull`(+ `cd app && npm install` — 의존성이
+   바뀌었을 수 있음), feature 브랜치에서 작업 → main 머지 → push.
+5. **머지 전 3종 체크**: `.venv/bin/python -m pytest -q`(맥) 또는
+   `.venv\Scripts\python -m pytest -q`(윈), `cd src-tauri && cargo test`,
+   `cd app && npm run build`.
