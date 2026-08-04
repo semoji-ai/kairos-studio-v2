@@ -5,11 +5,17 @@
 #   src-tauri/resources/core/                 (core/ minus __pycache__)
 #   src-tauri/resources/publish_agent.zip     (git archive snapshot of publish_agent HEAD)
 #   src-tauri/resources/python-embed/         (pinned CPython embeddable amd64, SHA256-verified)
+#   src-tauri/resources/ppt-master/           (pinned external workflow)
+#   src-tauri/resources/codex-fleet/          (parallel image runner)
 $ErrorActionPreference = "Stop"
 
 $RootDir = Split-Path -Parent $PSScriptRoot
 $ResourcesDir = Join-Path $RootDir "src-tauri\resources"
 $PublishAgentRepo = if ($env:KAIROS_PUBLISH_AGENT_REPO) { $env:KAIROS_PUBLISH_AGENT_REPO } else { Join-Path $env:USERPROFILE "LocalProjects\publish_agent" }
+$PptMasterRepo = if ($env:KAIROS_PPT_MASTER_REPO) { $env:KAIROS_PPT_MASTER_REPO } else { Join-Path (Split-Path -Parent $RootDir) "ppt-master" }
+$CodexFleetRepo = if ($env:KAIROS_CODEX_FLEET_REPO) { $env:KAIROS_CODEX_FLEET_REPO } else { Join-Path (Split-Path -Parent $RootDir) "codex-fleet" }
+$PromptKitRepo = if ($env:KAIROS_PROMPT_KIT_REPO) { $env:KAIROS_PROMPT_KIT_REPO } else { Join-Path $RootDir "vendor\gongnyang-prompt-kit" }
+$EngineLock = Get-Content -Raw (Join-Path $RootDir "presentation-engines.lock.json") | ConvertFrom-Json
 
 Write-Host "==> Building app frontend (npm run build)"
 Push-Location (Join-Path $RootDir "app")
@@ -73,5 +79,54 @@ Remove-Item -Force $PyZipPath
 # (cwd and PYTHONPATH are ignored), so `python -m core` can't see the sibling
 # core/ package. Add the parent resources dir to sys.path.
 Add-Content -Path (Join-Path $PyEmbedDest "python312._pth") -Value ".." -Encoding ascii
+Add-Content -Path (Join-Path $PyEmbedDest "python312._pth") -Value "Lib\site-packages" -Encoding ascii
+Add-Content -Path (Join-Path $PyEmbedDest "python312._pth") -Value "..\ppt-master\skills\ppt-master\scripts" -Encoding ascii
+
+Write-Host "==> Installing presentation Python packages"
+$SitePackages = Join-Path $PyEmbedDest "Lib\site-packages"
+New-Item -ItemType Directory -Force -Path $SitePackages | Out-Null
+py -3 -m pip install --disable-pip-version-check --target $SitePackages -r (Join-Path $RootDir "requirements-presentation.txt")
+if ($LASTEXITCODE -ne 0) { throw "presentation dependency install failed" }
+
+Write-Host "==> Staging PPT Master and codex-fleet"
+if (-not (Test-Path (Join-Path $PptMasterRepo "skills\ppt-master\SKILL.md"))) {
+    throw "ppt-master not found at $PptMasterRepo (set KAIROS_PPT_MASTER_REPO to override)"
+}
+if (-not (Test-Path (Join-Path $CodexFleetRepo "runners\codex_imagegen_runner.py"))) {
+    throw "codex-fleet not found at $CodexFleetRepo (set KAIROS_CODEX_FLEET_REPO to override)"
+}
+if (-not (Test-Path (Join-Path $PromptKitRepo "skills\image-prompt\SKILL.md"))) {
+    throw "gongnyang-prompt-kit not found at $PromptKitRepo"
+}
+$PptHead = (git -C $PptMasterRepo rev-parse HEAD).Trim()
+$FleetHead = (git -C $CodexFleetRepo rev-parse HEAD).Trim()
+$PromptKitHead = (git -C $PromptKitRepo rev-parse HEAD).Trim()
+if ($PptHead -ne $EngineLock.'ppt-master'.commit) {
+    throw "ppt-master commit mismatch: expected $($EngineLock.'ppt-master'.commit), got $PptHead"
+}
+if ($FleetHead -ne $EngineLock.'codex-fleet'.commit) {
+    throw "codex-fleet commit mismatch: expected $($EngineLock.'codex-fleet'.commit), got $FleetHead"
+}
+if ($PromptKitHead -ne $EngineLock.'gongnyang-prompt-kit'.commit) {
+    throw "gongnyang-prompt-kit commit mismatch: expected $($EngineLock.'gongnyang-prompt-kit'.commit), got $PromptKitHead"
+}
+$PptDest = Join-Path $ResourcesDir "ppt-master"
+$FleetDest = Join-Path $ResourcesDir "codex-fleet"
+$PromptKitDest = Join-Path $ResourcesDir "gongnyang-prompt-kit"
+if (Test-Path $PptDest) { Remove-Item -Recurse -Force $PptDest }
+if (Test-Path $FleetDest) { Remove-Item -Recurse -Force $FleetDest }
+if (Test-Path $PromptKitDest) { Remove-Item -Recurse -Force $PromptKitDest }
+New-Item -ItemType Directory -Force -Path $PptDest | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $FleetDest "runners") | Out-Null
+New-Item -ItemType Directory -Force -Path $PromptKitDest | Out-Null
+Copy-Item -Recurse -Force (Join-Path $PptMasterRepo "skills") $PptDest
+Copy-Item -Force (Join-Path $PptMasterRepo "LICENSE") $PptDest
+& (Join-Path $PyEmbedDest "python.exe") (Join-Path $RootDir "scripts\patch-ppt-master-compat.py") $PptDest
+if ($LASTEXITCODE -ne 0) { throw "PPT Master compatibility patch failed" }
+Copy-Item -Force (Join-Path $CodexFleetRepo "runners\codex_imagegen_runner.py") (Join-Path $FleetDest "runners")
+Copy-Item -Force (Join-Path $CodexFleetRepo "LICENSE") $FleetDest
+Copy-Item -Recurse -Force (Join-Path $PromptKitRepo "skills") $PromptKitDest
+Copy-Item -Force (Join-Path $PromptKitRepo "LICENSE") $PromptKitDest
+Copy-Item -Force (Join-Path $RootDir "presentation-engines.lock.json") $ResourcesDir
 
 Write-Host "==> Done. Resources staged at $ResourcesDir"

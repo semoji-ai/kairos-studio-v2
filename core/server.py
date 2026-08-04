@@ -3,25 +3,72 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import shutil
 import sqlite3
 import subprocess
+import sys
 import threading
+from email import policy
+from email.parser import BytesParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
-from core import bible_coverage, documents, providers, settings, setup
+from core import bible_coverage, documents, providers, sermon_rag, settings, setup
 from core.artifacts import collect
 from core.distill import distill
+from core.document_versions import resolve_editable, save_version
+from core.output_workspace import instruction as output_instruction
+from core.output_workspace import mirror_outputs, session_dir as output_session_dir
+from core.presentations import PresentationManager
 from core.recall import recall
 from core.router import route
 from core.store import Store
 
 _INJECT_BUDGET = 1500
+_MAX_REVIEW_BYTES = 1 * 1024 * 1024
 DISTILL_THRESHOLD = 10
 _distill_lock = threading.Lock()
+
+
+def _is_routine_disconnect(error: BaseException | None) -> bool:
+    return isinstance(
+        error,
+        (ConnectionResetError, ConnectionAbortedError, BrokenPipeError),
+    )
+
+
+class QuietThreadingHTTPServer(ThreadingHTTPServer):
+    """Ignore expected browser disconnects without hiding real server faults."""
+
+    def handle_error(self, request, client_address):
+        if _is_routine_disconnect(sys.exc_info()[1]):
+            return
+        super().handle_error(request, client_address)
+
+
+def _open_local_path(path: Path, reveal: bool = False) -> None:
+    """Open a generated local file or reveal it in the platform file manager."""
+    if os.name == "nt":
+        if reveal:
+            subprocess.Popen(["explorer.exe", "/select,", str(path)])
+        else:
+            os.startfile(str(path))
+        return
+    if sys.platform == "darwin":
+        subprocess.Popen(["open", "-R", str(path)] if reveal else ["open", str(path)])
+        return
+    subprocess.Popen(["xdg-open", str(path.parent if reveal else path)])
+
+
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
 
 
 def build_prompt(text: str, rec: dict) -> tuple[str, int]:
@@ -37,8 +84,10 @@ def build_prompt(text: str, rec: dict) -> tuple[str, int]:
     corrections = list(rec.get("corrections") or [])
     rules = list(rec.get("rules") or [])
     bible_refs = list(rec.get("bible_refs") or [])
+    document_edits = list(rec.get("document_edits") or [])
 
-    def render_block(snips: list[dict], rls: list[str], refs: list[dict]) -> str:
+    def render_block(snips: list[dict], rls: list[str], refs: list[dict],
+                     edits: list[dict]) -> str:
         blocks = []
         if rls:
             lines = "\n".join(f"- {r}" for r in rls)
@@ -62,23 +111,36 @@ def build_prompt(text: str, rec: dict) -> tuple[str, int]:
         if avoid:
             lines = "\n".join(f"- {a}" for a in avoid)
             blocks.append(f"[회피 신호 — 이런 식의 답변은 거부된 적 있음]\n{lines}")
+        if edits:
+            lines = "\n\n".join(
+                f"문서: {Path(e.get('path', '')).name}\n"
+                f"{str(e.get('diff', ''))[:500]}"
+                for e in edits[:3]
+            )
+            blocks.append(
+                "[목사님 문서 수정 학습 — AI 원문보다 수정 후 표현을 우선]\n"
+                f"{lines}"
+            )
         if not blocks:
             return ""
         return "\n\n".join(blocks)
 
-    block = render_block(snippets, rules, bible_refs)
+    block = render_block(snippets, rules, bible_refs, document_edits)
     while block and len(block) > _INJECT_BUDGET and snippets:
         snippets = snippets[:-1]
-        block = render_block(snippets, rules, bible_refs)
+        block = render_block(snippets, rules, bible_refs, document_edits)
     # 스니펫을 다 줄여도 여전히 캡 초과면 규칙을 오래된 것부터(리스트 끝) 줄인다.
     # store.list_rules()는 id 내림차순(최신 우선)이므로 끝을 자르면 최신이 남는다.
     while block and len(block) > _INJECT_BUDGET and rules:
         rules = rules[:-1]
-        block = render_block(snippets, rules, bible_refs)
+        block = render_block(snippets, rules, bible_refs, document_edits)
     # 마지막으로 성경 자료도 필요시 줄인다.
     while block and len(block) > _INJECT_BUDGET and bible_refs:
         bible_refs = bible_refs[:-1]
-        block = render_block(snippets, rules, bible_refs)
+        block = render_block(snippets, rules, bible_refs, document_edits)
+    while block and len(block) > _INJECT_BUDGET and document_edits:
+        document_edits = document_edits[:-1]
+        block = render_block(snippets, rules, bible_refs, document_edits)
 
     if not block:
         return text, 0
@@ -210,6 +272,43 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
             except (UnicodeDecodeError, json.JSONDecodeError):
                 return None
 
+        def _multipart(self) -> tuple[str, bytes, dict] | None:
+            """Parse one uploaded file plus UTF-8 form fields."""
+            ctype = self.headers.get("Content-Type", "")
+            if not ctype.lower().startswith("multipart/form-data"):
+                return None
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+            except ValueError:
+                return None
+            if length <= 0 or length > 135 * 1024 * 1024:
+                return None
+            raw = self.rfile.read(length)
+            message = BytesParser(policy=policy.default).parsebytes(
+                f"Content-Type: {ctype}\r\nMIME-Version: 1.0\r\n\r\n".encode() + raw)
+            filename = ""
+            content = b""
+            fields: dict[str, object] = {}
+            for part in message.iter_parts():
+                name = part.get_param("name", header="content-disposition")
+                part_filename = part.get_filename()
+                payload = part.get_payload(decode=True) or b""
+                if part_filename is not None and name == "file":
+                    filename = part_filename
+                    content = payload
+                elif name:
+                    value = payload.decode(part.get_content_charset() or "utf-8", errors="replace")
+                    if value.lower() in {"true", "false"}:
+                        fields[name] = value.lower() == "true"
+                    elif name == "slide_count":
+                        try:
+                            fields[name] = int(value)
+                        except ValueError:
+                            fields[name] = value
+                    else:
+                        fields[name] = value
+            return (filename, content, fields) if filename else None
+
         # ---- SSE ----
         def _sse_start(self):
             self.send_response(200)
@@ -232,10 +331,33 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
                 return self._send(200, {"ok": True})
             # 인증은 API 라우트에만. 그 외 경로는 Task 8에서 정적 서빙이 된다
             # (토큰이 index.html 주입으로 전달되므로 정적은 인증 불가/불요).
-            if u.path in ("/sessions", "/messages", "/settings", "/storage", "/cli/status",
-                          "/workspace/info", "/rules", "/setup/status", "/bible/coverage"):
-                if not self._authed():
+            api_path = (
+                u.path in ("/sessions", "/messages", "/settings", "/storage", "/cli/status",
+                           "/workspace/info", "/rules", "/setup/status", "/bible/coverage",
+                           "/presentations", "/presentations/engines", "/reviews")
+                or u.path.startswith("/presentations/")
+            )
+            presentation_download = bool(
+                re.fullmatch(r"/presentations/[0-9a-f]{12}/download", u.path)
+            )
+            download_token = parse_qs(u.query).get("token", [""])[0]
+            download_token_ok = presentation_download and secrets.compare_digest(
+                download_token, token
+            )
+            if api_path:
+                if not download_token_ok and not self._authed():
                     return self._send(401, {"error": "unauthorized"})
+                if u.path == "/presentations":
+                    return self._send(200, {"jobs": self._presentation_manager().list()})
+                if u.path == "/presentations/engines":
+                    return self._send(200, self._presentation_manager().engines())
+                if u.path.startswith("/presentations/"):
+                    bits = u.path.strip("/").split("/")
+                    if len(bits) == 2:
+                        job = self._presentation_manager().get(bits[1])
+                        return self._send(200, job) if job else self._send(404, {"error": "not found"})
+                    if len(bits) == 3 and bits[2] == "download":
+                        return self._serve_presentation(bits[1])
                 if u.path == "/bible/coverage":
                     ws = settings.load().get("workspace_dir")
                     if not ws:
@@ -248,6 +370,8 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
                     store = state["store"]
                     return self._send(200, {"rules": store.list_rules(active_only=False),
                                              "undistilled": store.count_undistilled_feedback()})
+                if u.path == "/reviews":
+                    return self._list_reviews()
                 if u.path == "/sessions":
                     return self._send(200, {"sessions": state["store"].list_sessions()})
                 if u.path == "/messages":
@@ -273,6 +397,8 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
             # 경로는 data_dir/artifacts 루트에 감금(resolve+relative_to).
             if u.path.startswith("/artifacts/"):
                 return self._serve_artifact(u.path)
+            if u.path == "/workspace-file":
+                return self._serve_workspace_file(u.query)
             return self._serve_static()
 
         def _data_dir(self) -> Path:
@@ -281,9 +407,54 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
                 db_path = Path(settings.load()["data_dir"]).expanduser() / "kairos.db"
             return Path(db_path).parent
 
+        def _presentation_manager(self) -> PresentationManager:
+            bundle = os.environ.get("KAIROS_BUNDLE_DIR")
+            return PresentationManager(self._data_dir(), Path(bundle) if bundle else None)
+
+        def _serve_presentation(self, job_id: str):
+            target = self._presentation_target(job_id)
+            if target is None:
+                return self._send(404, {"error": "result not found"})
+            data = target.read_bytes()
+            safe_title = re.sub(r"[^0-9A-Za-z가-힣._-]+", "-", target.name)
+            self.send_response(200)
+            self.send_header("Content-Type",
+                             "application/vnd.openxmlformats-officedocument.presentationml.presentation")
+            self.send_header("Content-Disposition",
+                             f"attachment; filename*=UTF-8''{quote(safe_title)}")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def _presentation_target(self, job_id: str) -> Path | None:
+            job = self._presentation_manager().get(job_id)
+            if not job or job.get("status") != "completed" or not job.get("result"):
+                return None
+            target = Path(job["result"])
+            root = (self._data_dir() / "presentations" / job_id).resolve()
+            try:
+                target = target.resolve()
+                target.relative_to(root)
+            except (OSError, ValueError):
+                return None
+            if not target.is_file():
+                return None
+            return target
+
+        def _open_presentation(self, job_id: str, reveal: bool):
+            target = self._presentation_target(job_id)
+            if target is None:
+                return self._send(404, {"error": "result not found"})
+            try:
+                _open_local_path(target, reveal=reveal)
+            except OSError as exc:
+                return self._send(500, {"error": f"open failed: {exc}"})
+            return self._send(200, {"ok": True, "path": str(target)})
+
         _ARTIFACT_CTYPES = {".png": "image/png", ".jpg": "image/jpeg",
                              ".jpeg": "image/jpeg", ".webp": "image/webp",
-                             ".gif": "image/gif", ".md": "text/markdown"}
+                             ".gif": "image/gif", ".md": "text/markdown",
+                             ".json": "application/json"}
 
         def _serve_artifact(self, url_path: str):
             root = (self._data_dir() / "artifacts").resolve()
@@ -302,6 +473,144 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
+
+        def _serve_workspace_file(self, query: str):
+            q = parse_qs(query)
+            request_token = q.get("token", [""])[0]
+            if not secrets.compare_digest(request_token, token):
+                return self._send(401, {"error": "unauthorized"})
+            loaded_settings = settings.load()
+            workspace = loaded_settings.get("workspace_dir")
+            output_dir = loaded_settings.get("output_dir")
+            raw_path = unquote(q.get("path", [""])[0])
+            if not raw_path:
+                return self._send(404, {"error": "not found"})
+            try:
+                candidate = Path(raw_path).expanduser()
+                roots = [
+                    Path(value).expanduser().resolve()
+                    for value in (workspace, output_dir) if value
+                ]
+                if not roots:
+                    return self._send(404, {"error": "not found"})
+                target = candidate.resolve() if candidate.is_absolute() else (roots[0] / candidate).resolve()
+                if not any(_is_relative_to(target, root) for root in roots):
+                    return self._send(404, {"error": "not found"})
+            except (OSError, ValueError):
+                return self._send(404, {"error": "not found"})
+            ctype = self._ARTIFACT_CTYPES.get(target.suffix.lower())
+            if ctype is None or not target.is_file():
+                return self._send(404, {"error": "not found"})
+            data = target.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def _list_reviews(self):
+            output = settings.load().get("output_dir")
+            if not output:
+                return self._send(200, {"reviews": []})
+            try:
+                root = Path(output).expanduser().resolve()
+            except (OSError, ValueError):
+                return self._send(200, {"reviews": []})
+            if not root.is_dir():
+                return self._send(200, {"reviews": []})
+            reviews = []
+            try:
+                candidates = sorted(
+                    root.rglob("*.review.json"),
+                    key=lambda path: path.stat().st_mtime,
+                    reverse=True,
+                )
+                for candidate in candidates[:100]:
+                    target = candidate.resolve()
+                    if not _is_relative_to(target, root) or target.stat().st_size > _MAX_REVIEW_BYTES:
+                        continue
+                    try:
+                        payload = json.loads(target.read_text(encoding="utf-8"))
+                    except (OSError, UnicodeError, json.JSONDecodeError):
+                        continue
+                    if payload.get("schema") != "kairos.theology-review.v1":
+                        continue
+                    claims = payload.get("claims")
+                    if not isinstance(claims, list):
+                        continue
+                    decided = sum(
+                        1 for claim in claims
+                        if isinstance(claim, dict) and claim.get("status") != "pending"
+                    )
+                    reviews.append({
+                        "path": str(target),
+                        "title": str(payload.get("title") or target.stem),
+                        "status": str(payload.get("review_status") or "in_review"),
+                        "total": len(claims),
+                        "decided": decided,
+                        "updated_at": payload.get("updated_at"),
+                    })
+            except OSError:
+                return self._send(200, {"reviews": []})
+            return self._send(200, {"reviews": reviews})
+
+        def _save_workspace_file(self, body: dict):
+            cfg = settings.load()
+            roots = [
+                Path(value).expanduser()
+                for value in (cfg.get("workspace_dir"), cfg.get("output_dir")) if value
+            ]
+            path_text = body.get("path")
+            content = body.get("content")
+            message_id = body.get("message_id")
+            if not isinstance(path_text, str) or not isinstance(content, str):
+                return self._send(400, {"error": "path and content are required"})
+            try:
+                target = resolve_editable(unquote(path_text), roots)
+                result = save_version(target, content)
+            except (OSError, UnicodeError, ValueError) as exc:
+                return self._send(400, {"error": str(exc)})
+            if result["changed"]:
+                mid = int(message_id) if isinstance(message_id, int) else None
+                state["store"].add_document_revision(mid, result)
+                if mid is not None and state["store"].session_for_message(mid):
+                    payload = (
+                        "문서 편집에서 확인된 목사님 표현 수정:\n"
+                        f"{result['diff'][:4000]}"
+                    )
+                    state["store"].add_feedback(mid, "correction", payload)
+                    session = state["store"].session_for_message(mid)
+                    try:
+                        target_dir = output_session_dir(
+                            cfg.get("output_dir"), session["id"], session["title"])
+                        mirror_outputs(str(target), cfg.get("workspace_dir"), target_dir)
+                        if target_dir is not None and result["version_path"]:
+                            version_source = Path(result["version_path"])
+                            version_target = (
+                                target_dir / ".kairos-versions" / target.stem
+                                / version_source.name
+                            )
+                            version_target.parent.mkdir(parents=True, exist_ok=True)
+                            shutil.copy2(version_source, version_target)
+                    except OSError:
+                        pass
+            promoted = None
+            if target.name.endswith(".review.json"):
+                try:
+                    promoted = sermon_rag.promote_approved_reviews(
+                        cfg.get("workspace_dir"), cfg.get("output_dir")
+                    )
+                except (OSError, UnicodeError, ValueError):
+                    promoted = None
+            return self._send(200, {
+                "changed": result["changed"],
+                "path": result["path"],
+                "version_path": result["version_path"],
+                "additions": result["additions"],
+                "deletions": result["deletions"],
+                "learned": bool(result["changed"]),
+                "promoted": promoted,
+            })
 
         def _workspace_info(self):
             ws_str = settings.load()["workspace_dir"]
@@ -407,6 +716,30 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
                 return self._send(403, {"error": "forbidden host"})
             if not self._authed():
                 return self._send(401, {"error": "unauthorized"})
+            if self.path == "/presentations":
+                upload = self._multipart()
+                if upload is None:
+                    return self._send(400, {"error": "bad multipart upload"})
+                filename, content, options = upload
+                try:
+                    job = self._presentation_manager().create(filename, content, options)
+                except (OSError, ValueError) as exc:
+                    return self._send(400, {"error": str(exc)})
+                return self._send(202, job)
+            m = re.fullmatch(r"/presentations/([0-9a-f]{12})/retry", self.path)
+            if m:
+                try:
+                    job = self._presentation_manager().retry(m.group(1))
+                except ValueError as exc:
+                    return self._send(400, {"error": str(exc)})
+                return self._send(202, job)
+            m = re.fullmatch(
+                r"/presentations/([0-9a-f]{12})/(open|reveal)", self.path
+            )
+            if m:
+                return self._open_presentation(
+                    m.group(1), reveal=m.group(2) == "reveal"
+                )
             body = self._body()
             if body is None:
                 return self._send(400, {"error": "bad json"})
@@ -462,6 +795,8 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
                 return self._send(400, {"error": "bad json"})
             if self.path == "/settings":
                 return self._put_settings(body)
+            if self.path == "/workspace-file":
+                return self._save_workspace_file(body)
             return self._send(404, {"error": "not found"})
 
         def do_DELETE(self):
@@ -536,17 +871,34 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
             cfg = settings.load()
             store = state["store"]
             session_id = body.get("session_id")
+            session_title = text[:30]
             if session_id is None:
-                session_id = store.create_session(text[:30])
+                session_id = store.create_session(session_title)
             session_id = int(session_id)
+            try:
+                task_output_dir = output_session_dir(
+                    cfg.get("output_dir"), session_id, session_title)
+            except OSError:
+                task_output_dir = None
             provider_name, cleaned = route(text, cfg)
             store.add_message(session_id, "user", [{"type": "text", "text": text}])
             session_ref = _last_session_ref(store, session_id, provider_name)
 
+            self._sse_start()
+
+            def send_status(code: str, label: str, detail: str = ""):
+                event = {"type": "status", "code": code, "label": label}
+                if detail:
+                    event["detail"] = detail
+                self._sse(event)
+
+            send_status("preparing", "질문을 정리하고 있습니다")
             if cfg.get("learning_recall_enabled", True):
+                send_status("checking_context", "관련 대화와 학습 내용을 확인하고 있습니다")
                 rec = recall(store, text, session_id)
                 rec["rules"] = [r["rule"].replace("\n", " ").strip()
                                 for r in store.list_rules(active_only=True)]
+                rec["document_edits"] = store.list_document_revisions(limit=3)
                 # Search Bible knowledge base — 인사말 수준의 짧은 입력에는
                 # 주입하지 않는다 (무관한 구절이 맥락을 오염시키는 것 방지)
                 bible_db = Path(__file__).parent.parent / "bible_documents.db"
@@ -559,6 +911,29 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
                 prompt, n_recalled = build_prompt(cleaned, rec)
             else:
                 prompt, n_recalled = cleaned, 0
+            sermon_request = sermon_rag.is_sermon_request(cleaned)
+            if sermon_request:
+                send_status(
+                    "searching_sermons",
+                    "과거 설교와 승인된 목사님 원칙을 살펴보고 있습니다",
+                    "2019–2026년 설교와 승인·보정 이력을 검색합니다.",
+                )
+            try:
+                sermon_context, n_sermon_rag = sermon_rag.build_sermon_context(
+                    cleaned, cfg.get("workspace_dir"), cfg.get("output_dir")
+                )
+            except (OSError, UnicodeError, ValueError):
+                sermon_context, n_sermon_rag = "", 0
+            if sermon_context:
+                prompt = f"{sermon_context}\n\n---\n{prompt}"
+                send_status(
+                    "organizing_evidence",
+                    "관련 설교 근거를 정리하고 있습니다",
+                    f"질문과 관련된 근거 {n_sermon_rag}건을 확인했습니다.",
+                )
+            location_instruction = output_instruction(task_output_dir)
+            if location_instruction:
+                prompt = f"{location_instruction}\n\n{prompt}"
 
             # 결정적 성경 본문 주입: 입력에 "로마서 8:1-4" 같은 참조가 있으면
             # LLM 기억이 아니라 로컬 베들레헴 DB에서 기계적으로 조회해 첨부한다.
@@ -571,7 +946,8 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
                 if vb:
                     prompt = f"{vb}\n\n{prompt}"
 
-            self._sse_start()
+            send_status("planning", "답변의 흐름을 구성하고 있습니다")
+            send_status("generating", "답변을 작성하고 있습니다")
             final = None
             try:
                 for ev in providers.get(provider_name).chat(prompt, session_ref=session_ref, cfg=cfg):
@@ -590,6 +966,7 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
             if final is None:
                 self._sse({"type": "error", "error": "provider ended without done"})
                 return
+            send_status("saving", "작업 결과를 정리하고 저장하고 있습니다")
             content = [{"type": "text", "text": final["text"]}]
             if final.get("log"):
                 content.append({"type": "log", "text": final["log"]})
@@ -602,11 +979,16 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
                                 self._data_dir(), mid)
             except Exception:
                 parts = []
+            try:
+                mirror_outputs(final["text"], cfg.get("workspace_dir"), task_output_dir)
+            except Exception:
+                pass
             if parts:
                 store.append_parts(mid, parts)
             self._sse({"type": "done", "message_id": mid,
                        "session_id": session_id, "provider": provider_name,
-                       "recalled": n_recalled, "artifacts": len(parts)})
+                       "recalled": n_recalled, "sermon_rag": n_sermon_rag,
+                       "artifacts": len(parts)})
 
             if (cfg.get("learning_recall_enabled", True)
                     and store.count_undistilled_feedback() >= DISTILL_THRESHOLD):
@@ -621,4 +1003,4 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
                         _distill_lock.release()
                 threading.Thread(target=_auto_distill, daemon=True).start()
 
-    return ThreadingHTTPServer((host, port), Handler)
+    return QuietThreadingHTTPServer((host, port), Handler)

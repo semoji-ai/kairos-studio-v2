@@ -15,6 +15,7 @@ export default function Settings({ onClose }: { onClose: () => void }) {
   const [workspace, setWorkspace] = useState<WorkspaceInfo | null>(null);
   const [dataDirInput, setDataDirInput] = useState("");
   const [workspaceDirInput, setWorkspaceDirInput] = useState("");
+  const [outputDirInput, setOutputDirInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [rules, setRules] = useState<Rule[]>([]);
@@ -32,6 +33,7 @@ export default function Settings({ onClose }: { onClose: () => void }) {
       setSettings(s);
       setDataDirInput(s.data_dir);
       setWorkspaceDirInput(s.workspace_dir ?? "");
+      setOutputDirInput(s.output_dir ?? "");
     });
     cliStatus().then(setCli);
     storageInfo().then(setStorage);
@@ -75,6 +77,7 @@ export default function Settings({ onClose }: { onClose: () => void }) {
       setStorage(s);
       setDataDirInput(updated.data_dir);
       setWorkspaceDirInput(updated.workspace_dir ?? "");
+      setOutputDirInput(updated.output_dir ?? "");
       const w = await workspaceInfo();
       setWorkspace(w);
     } catch (e) {
@@ -157,6 +160,19 @@ export default function Settings({ onClose }: { onClose: () => void }) {
             스킬이 파일을 쓰려면 권한을 acceptEdits / workspace-write로 올리는 것을 권장합니다
           </div>
         )}
+
+        <div style={{ marginTop: 16 }}>산출물 폴더</div>
+        <div style={{ fontSize: 12, color: "#666", marginTop: 4 }}>
+          작업 폴더의 지침·도구는 유지하고, 완성된 문서와 이미지만 세션별로 모읍니다.
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <input value={outputDirInput} onChange={e => setOutputDirInput(e.target.value)}
+                 placeholder="(미설정)" style={{ width: 300 }} />
+          <button style={{ marginLeft: 8 }} disabled={saving}
+                  onClick={() => save({ output_dir: outputDirInput.trim() === "" ? null : outputDirInput })}>
+            저장
+          </button>
+        </div>
       </section>
 
       <section style={{ margin: "16px 0" }}>

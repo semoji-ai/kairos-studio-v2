@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "default": "quiet-cinematic-editorial",
+  "default_image_style": "cinematic-documentary",
+  "image_styles": [
+    {
+      "id": "cinematic-documentary",
+      "name": "시네마틱 다큐멘터리",
+      "description": "자연스러운 인물과 실제 공간을 영화적 사진으로 표현합니다.",
+      "visual_dna": "Premium cinematic documentary photography, authentic human emotion and lived-in real spaces, 35mm lens at eye level, natural depth of field, warm directional window light, muted earth tones with deep forest green and restrained terracotta accents, gentle highlight roll-off, fine analog film grain, realistic skin and material texture, quiet contemplative editorial mood"
+    },
+    {
+      "id": "editorial-illustration",
+      "name": "프리미엄 에디토리얼 일러스트",
+      "description": "절제된 색과 풍부한 종이 질감의 현대적 삽화로 통일합니다.",
+      "visual_dna": "Premium contemporary editorial illustration, hand-painted gouache and refined digital collage, simplified expressive figures and symbolic environments, softly layered paper texture, restrained warm ivory forest green terracotta and charcoal palette, elegant negative space, subtle imperfect edges, sophisticated magazine composition, calm intelligent human warmth"
+    },
+    {
+      "id": "minimal-3d",
+      "name": "미니멀 매트 3D",
+      "description": "부드러운 재질과 조명의 고급 3D 오브젝트 스타일입니다.",
+      "visual_dna": "Premium minimal matte 3D illustration, tactile clay and paper-cut forms, softly rounded geometry, carefully staged dimensional composition, warm diffused studio lighting, gentle contact shadows, restrained ivory sage terracotta and charcoal palette, refined material detail, clean architectural spacing, calm premium educational mood"
+    },
+    {
+      "id": "clean-graphic",
+      "name": "클린 에디토리얼 그래픽",
+      "description": "일관된 도형 언어와 제한된 색상의 세련된 그래픽입니다.",
+      "visual_dna": "Refined contemporary editorial graphic illustration, bold geometric shapes and elegant organic curves, consistent medium-weight visual language, crisp layered composition, restrained ivory deep forest green terracotta and muted sage palette, strong hierarchy and generous negative space, subtle print texture, sophisticated modern educational identity"
+    }
+  ],
+  "styles": [
+    {
+      "id": "quiet-cinematic-editorial",
+      "name": "조용한 시네마틱 에디토리얼",
+      "description": "영화적 이미지, 큰 타이포그래피, 절제된 편집 그리드와 여백을 사용하는 인문·신학 강의 스타일",
+      "tone": "차분하고 깊이 있는 시네마틱 에디토리얼 강의 자료",
+      "design_brief": {
+        "direction": "Quiet Cinematic Editorial",
+        "palette": {
+          "background": "#F4F0E8",
+          "secondary_background": "#E7E3DA",
+          "primary": "#17231F",
+          "accent": "#C45B3C",
+          "secondary_accent": "#7D978A",
+          "body_text": "#17231F",
+          "muted_text": "#66716B"
+        },
+        "typography": {
+          "family": "Noto Sans KR, Arial, sans-serif",
+          "title_weight": 800,
+          "body_weight": 400,
+          "body_size": 24,
+          "title_size": 52,
+          "subtitle_size": 28,
+          "lead_size": 32,
+          "annotation_size": 16,
+          "display_size": 92
+        },
+        "layout_rules": [
+          "한 슬라이드는 하나의 핵심 주장만 전달한다.",
+          "히어로, 에디토리얼, 내러티브, 플로우, 클로징 문법을 페이지 역할에 맞게 교차 사용한다.",
+          "연속된 두 페이지에 같은 구성을 반복하지 않는다.",
+          "다중 둥근 카드 그리드를 기본 레이아웃으로 사용하지 않는다.",
+          "컨테이너는 비교, 인용, 하나의 의미 그룹을 표현할 때만 사용한다.",
+          "여백과 얇은 구분선, 비대칭 정렬, 대형 타이포그래피로 정보 위계를 만든다.",
+          "FLOW는 카드 나열이 아니라 좌표, 선, 경로와 수렴 관계가 먼저 읽혀야 한다."
+        ],
+        "image_direction": [
+          "이미지는 장식이 아니라 슬라이드의 핵심 메시지를 전달하는 장면으로 사용한다.",
+          "덱 전체에서 동일한 렌즈, 조명, 색보정, 인물 표현을 유지한다.",
+          "따뜻한 자연광, 절제된 영화적 대비, 인간적인 표정과 실제 공간의 질감을 사용한다.",
+          "표지와 핵심 전환 페이지는 풀블리드 또는 강한 비대칭 크롭을 사용한다.",
+          "이미지 안에는 제목이나 본문 문자를 생성하지 않는다."
+        ],
+        "powerpoint_qa": [
+          "한글 제목과 본문은 실제 글자 폭을 기준으로 수동 줄바꿈한다.",
+          "여러 줄 제목과 본문에는 충분한 PowerPoint 텍스트 프레임 폭과 높이를 명시한다.",
+          "SVG 검사 후 실제 PPTX를 1280×720 PNG로 렌더링해 겹침, 잘림, 자동 재줄바꿈을 확인한다.",
+          "숫자 배지는 원 중심과 글리프의 시각 중심을 맞춘다.",
+          "최종 SVG 품질 게이트의 오류는 0건이어야 한다."
+        ]
+      }
+    },
+    {
+      "id": "adaptive",
+      "name": "내용에 맞게 자동 설계",
+      "description": "원고와 대상 청중에 맞춰 PPT Master가 디자인 방향을 새로 결정합니다.",
+      "tone": "명료하고 현대적인 교육 자료",
+      "design_brief": null
+    }
+  ]
+}

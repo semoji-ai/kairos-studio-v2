@@ -25,6 +25,22 @@ def test_extract_workspace_relative_path(tmp_path):
     assert found == [img.resolve()]
 
 
+def test_extract_path_from_markdown_link(tmp_path):
+    doc = tmp_path / "draft.md"
+    doc.write_text("# draft")
+    text = f"작성했습니다: [draft.md]({doc})"
+    found = extract_artifacts(text, workspace_dir=None)
+    assert found == [doc.resolve()]
+
+
+def test_extract_json_review_document(tmp_path):
+    doc = tmp_path / "theology.review.json"
+    doc.write_text('{"schema":"kairos.theology-review.v1"}', encoding="utf-8")
+    text = f"승인 검토: {doc}"
+    found = extract_artifacts(text, workspace_dir=None)
+    assert found == [doc.resolve()]
+
+
 def test_extract_skips_missing_file(tmp_path):
     text = "없는 파일: /nope/not-there.png 그리고 also-missing.md"
     found = extract_artifacts(text, workspace_dir=str(tmp_path))

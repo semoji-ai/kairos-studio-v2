@@ -11,14 +11,32 @@ from typing import Iterator
 
 # 워크스페이스의 읽기 전용 준비 스크립트만 사전 허용한다. 와일드카드는 인자에만
 # 걸리므로 목록 밖 명령(rm, git push 등)은 여전히 권한 프롬프트/거부 대상이다.
-_ALLOWED_TOOLS = [
-    "Bash(py -3 tools/bible_lookup.py:*)",
-    "Bash(python tools/bible_lookup.py:*)",
-    "Bash(py -3 skills/shared/scripts/verify_sermon.py:*)",
-    "Bash(python skills/shared/scripts/verify_sermon.py:*)",
-    "Bash(py -3 skills/shared/scripts/sermon_fingerprint.py:*)",
-    "Bash(python skills/shared/scripts/sermon_fingerprint.py:*)",
+_PREP_SCRIPTS = [
+    "tools/bible_lookup.py",
+    "skills/shared/scripts/verify_sermon.py",
+    "skills/shared/scripts/sermon_fingerprint.py",
 ]
+_INTERPRETERS = ["py -3", "py", "python", "python3"]
+
+
+def allowed_tools(workspace: str | None = None) -> list[str]:
+    """준비 스크립트 호출의 경로 표기 변형을 모두 허용 목록으로 만든다.
+
+    모델은 같은 스크립트를 슬래시/백슬래시/절대경로/따옴표 등 여러 형태로
+    호출하는데, 권한 매칭은 문자열 접두사 비교라 한 형태만 넣으면 나머지가
+    조용히 차단된다(헤드리스에서는 프롬프트도 못 띄운다).
+    """
+    specs: list[str] = []
+    bases = list(_PREP_SCRIPTS)
+    if workspace:
+        root = str(Path(workspace).expanduser())
+        bases += [f"{root}/{s}" for s in _PREP_SCRIPTS]
+    for base in bases:
+        for path in {base, base.replace("/", "\\")}:
+            for interp in _INTERPRETERS:
+                specs.append(f"Bash({interp} {path}:*)")
+                specs.append(f'Bash({interp} "{path}":*)')
+    return specs
 
 
 def _base_cmd() -> list[str] | None:
@@ -47,8 +65,13 @@ def chat(prompt: str, session_ref: str | None = None,
     # 헤드리스에서는 권한 프롬프트에 답할 수 없어 워크스페이스 도구 실행이
     # 막힌다. 설교 준비에 필요한 읽기 전용 스크립트만 사전 허용한다
     # (임의 셸 명령은 여전히 거부 — 목록에 있는 스크립트로 한정).
-    for spec in _ALLOWED_TOOLS:
+    for spec in allowed_tools((cfg or {}).get("workspace_dir")):
         cmd += ["--allowedTools", spec]
+    # 전용 워크플로가 실행에 필요한 좁은 Bash 패턴을 전달할 수 있다.
+    # 일반 채팅에는 설정되지 않으며, 호출 측이 구성한 정확한 도구 패턴만 추가한다.
+    for spec in (cfg or {}).get("claude_allowed_tools", []):
+        if isinstance(spec, str) and spec.startswith("Bash(") and spec.endswith(")"):
+            cmd += ["--allowedTools", spec]
     if session_ref:
         cmd += ["--resume", session_ref]
     ws = (cfg or {}).get("workspace_dir")

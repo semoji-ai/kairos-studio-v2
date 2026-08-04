@@ -6,8 +6,13 @@
       "../bible_documents.db": "resources/bible_documents.db",
       "resources/core": "resources/core",
       "resources/dist": "resources/dist",
+      "resources/ppt-master": "resources/ppt-master",
+      "resources/codex-fleet": "resources/codex-fleet",
+      "resources/gongnyang-prompt-kit": "resources/gongnyang-prompt-kit",
+      "resources/python-packages": "resources/python-packages",
+      "resources/presentation-engines.lock.json": "resources/presentation-engines.lock.json",
       "resources/publish_agent.zip": "resources/publish_agent.zip",
-      "resources/python-embed/**/*": "resources/python-embed"
+      "resources/python-embed": "resources/python-embed"
     }
   }
 }

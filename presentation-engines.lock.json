@@ -1,0 +1,14 @@
+{
+  "ppt-master": {
+    "repository": "https://github.com/hugohe3/ppt-master.git",
+    "commit": "68c690bbe2e170bca657c2dffd47434056cfabcd"
+  },
+  "codex-fleet": {
+    "repository": "https://github.com/gongnyang/codex-fleet.git",
+    "commit": "dc4d724d3c978077e406b4b3f0811bb0157094ad"
+  },
+  "gongnyang-prompt-kit": {
+    "repository": "https://github.com/gongnyang/gongnyang-prompt-kit.git",
+    "commit": "2d775df72aa03c9d00a699516a26c35e5d0f40db"
+  }
+}

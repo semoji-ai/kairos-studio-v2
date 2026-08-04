@@ -4,6 +4,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::fs::{self, OpenOptions};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -87,6 +88,15 @@ pub fn spawn_sidecar(paths: &ResolvedPaths, token: &str, data_dir: &Path) -> std
     cmd.current_dir(cwd);
     cmd.stdin(Stdio::piped());
     cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // Prevent the embedded interpreter from allocating a visible console
+        // while preserving the inherited handshake pipe used during startup.
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
     let mut child = cmd.spawn()?;
     let stdout = child
         .stdout
@@ -112,6 +122,57 @@ pub fn spawn_sidecar(paths: &ResolvedPaths, token: &str, data_dir: &Path) -> std
             Err(e)
         }
     }
+}
+
+/// Start the persistent PPT queue worker as a sibling of the API sidecar.
+///
+/// The child is deliberately excluded from `SidecarState`: closing or
+/// restarting the Tauri shell reaps only the HTTP sidecar, while this worker
+/// continues processing the durable queue.
+pub fn spawn_presentation_worker(paths: &ResolvedPaths, data_dir: &Path) -> std::io::Result<u32> {
+    let cwd = paths.core_dir.parent().unwrap_or(&paths.core_dir);
+    let log_dir = data_dir.join("presentations");
+    fs::create_dir_all(&log_dir)?;
+    let stdout = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_dir.join("worker.log"))?;
+    let stderr = stdout.try_clone()?;
+
+    let mut cmd = Command::new(&paths.python);
+    cmd.arg("-m")
+        .arg("core.presentation_worker")
+        .current_dir(cwd)
+        .env("KAIROS_DATA_DIR", data_dir)
+        .env("KAIROS_CONFIG_DIR", data_dir)
+        .env("KAIROS_BUNDLE_DIR", &paths.bundle_dir)
+        .env(
+            "PYTHONPATH",
+            paths.bundle_dir.join("python-packages").to_string_lossy().to_string(),
+        )
+        .env("PYTHONUNBUFFERED", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(stdout))
+        .stderr(Stdio::from(stderr));
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+
+    let mut child = cmd.spawn()?;
+    let pid = child.id();
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(pid)
 }
 
 /// Read the first line from `reader`, giving up after `timeout`. The blocking
@@ -188,6 +249,8 @@ pub fn run() {
                 return Err(format!("sidecar unhealthy on port {}", info.port).into());
             }
             app.state::<SidecarState>().0.lock().unwrap().replace(child);
+            spawn_presentation_worker(&paths, &data_dir)
+                .map_err(|e| format!("failed to spawn presentation worker: {e}"))?;
 
             let url = format!("http://127.0.0.1:{}/", info.port);
             tauri::WebviewWindowBuilder::new(

@@ -42,6 +42,16 @@ CREATE TABLE IF NOT EXISTS distill_state(
   id INTEGER PRIMARY KEY CHECK(id=1),
   last_feedback_id INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS document_revisions(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  message_id INTEGER,
+  path TEXT NOT NULL,
+  version_path TEXT NOT NULL,
+  original_excerpt TEXT NOT NULL,
+  edited_excerpt TEXT NOT NULL,
+  diff TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 _FEEDBACK_KINDS = {"up", "down", "correction"}
@@ -174,6 +184,36 @@ class Store:
                 (message_id, kind, payload),
             )
             return cur.lastrowid
+
+    def add_document_revision(self, message_id: int | None, result: dict) -> int:
+        with self._conn() as c:
+            cur = c.execute(
+                "INSERT INTO document_revisions"
+                " (message_id,path,version_path,original_excerpt,edited_excerpt,diff)"
+                " VALUES (?,?,?,?,?,?)",
+                (
+                    message_id, result["path"], result["version_path"],
+                    result["original"][:1200], result["edited"][:1200],
+                    result["diff"][:8000],
+                ),
+            )
+            return cur.lastrowid
+
+    def list_document_revisions(self, limit: int = 3) -> list[dict]:
+        rows = self._conn().execute(
+            "SELECT id,message_id,path,version_path,original_excerpt,edited_excerpt,diff,created_at"
+            " FROM document_revisions ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def session_for_message(self, message_id: int) -> dict | None:
+        row = self._conn().execute(
+            "SELECT s.id,s.title FROM messages m"
+            " JOIN sessions s ON s.id=m.session_id WHERE m.id=?",
+            (message_id,),
+        ).fetchone()
+        return dict(row) if row else None
 
     def feedback_for_message(self, message_id: int) -> list[dict]:
         rows = self._conn().execute(

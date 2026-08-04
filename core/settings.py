@@ -12,6 +12,7 @@ DEFAULTS = {
     "codex_sandbox": "read-only",
     "claude_permission_mode": "default",
     "workspace_dir": None,
+    "output_dir": None,
     "learning_recall_enabled": True,
 }
 
@@ -47,6 +48,10 @@ def _validate(patch: dict) -> None:
                 raise ValueError("workspace_dir must be str or None")
             if not Path(v).expanduser().is_dir():
                 raise ValueError("workspace_dir does not exist")
+    if "output_dir" in patch:
+        v = patch["output_dir"]
+        if v is not None and not isinstance(v, str):
+            raise ValueError("output_dir must be str or None")
 
 
 def _load_raw() -> dict:

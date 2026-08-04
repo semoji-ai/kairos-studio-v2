@@ -14,11 +14,11 @@ import shutil
 from pathlib import Path
 
 _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
-_DOC_EXTS = {".md"}
+_DOC_EXTS = {".md", ".json"}
 _ALL_EXTS = _IMAGE_EXTS | _DOC_EXTS
 
 _PATH_RE = re.compile(
-    r"""[^\s"'`]+\.(?:png|jpe?g|webp|gif|md)""", re.IGNORECASE
+    r"""[^\s"'`()\[\]]+\.(?:png|jpe?g|webp|gif|md|json)""", re.IGNORECASE
 )
 
 _MAX_IMAGE_BYTES = 10 * 1024 * 1024
@@ -116,6 +116,7 @@ def collect(text: str, workspace_dir: str | None, data_dir: Path,
             part: dict = {"type": ctype, "artifact": artifact_rel}
             if ctype == "document":
                 part["title"] = src.name
+                part["source_path"] = str(src)
             parts.append(part)
         except Exception:
             continue

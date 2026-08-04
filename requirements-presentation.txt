@@ -1,0 +1,7 @@
+# Kairos Presentation runtime
+python-pptx>=0.6.21
+XlsxWriter>=3.0.0
+PyMuPDF>=1.23.0
+Pillow>=9.0.0
+numpy>=1.20.0
+Flask>=3.0.0

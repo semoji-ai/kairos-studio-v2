@@ -50,6 +50,9 @@ pub fn sidecar_env(
         ("KAIROS_DATA_DIR".to_string(), data_dir.to_string_lossy().to_string()),
         ("KAIROS_CONFIG_DIR".to_string(), data_dir.to_string_lossy().to_string()),
         ("KAIROS_BUNDLE_DIR".to_string(), bundle_dir.to_string_lossy().to_string()),
+        ("KAIROS_PRESENTATION_EXTERNAL_WORKER".to_string(), "1".to_string()),
+        ("PYTHONPATH".to_string(),
+         bundle_dir.join("python-packages").to_string_lossy().to_string()),
     ]
 }
 
@@ -118,7 +121,12 @@ mod tests {
         assert_eq!(get("KAIROS_STATIC_DIR"), Some("/repo/app/dist".to_string()));
         assert_eq!(get("KAIROS_DATA_DIR"), Some("/data".to_string()));
         assert_eq!(get("KAIROS_CONFIG_DIR"), Some("/data".to_string()));
+        assert_eq!(get("KAIROS_PRESENTATION_EXTERNAL_WORKER"), Some("1".to_string()));
         assert_eq!(get("KAIROS_BUNDLE_DIR"), Some("/bundle".to_string()));
+        assert_eq!(
+            get("PYTHONPATH").map(PathBuf::from),
+            Some(PathBuf::from("/bundle").join("python-packages"))
+        );
     }
 
     #[test]

@@ -1,17 +1,26 @@
 import json
+import re
 import sys
 import threading
+import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
 import pytest
 
-from core.server import make_server
+from core.server import _is_routine_disconnect, make_server
 from core.store import Store
 
 FAKES = Path(__file__).parent / "fakes"
 TOKEN = "test-token"
+
+
+def test_routine_browser_disconnects_are_quiet():
+    assert _is_routine_disconnect(ConnectionResetError(10054, "reset"))
+    assert _is_routine_disconnect(BrokenPipeError())
+    assert not _is_routine_disconnect(RuntimeError("real failure"))
 
 
 @pytest.fixture()
@@ -44,6 +53,26 @@ def _sse_events(resp):
     return events
 
 
+def _multipart_req(url, path, filename, content, fields=None):
+    boundary = "----kairos-test-boundary"
+    chunks = []
+    for key, value in (fields or {}).items():
+        chunks.append(
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"{key}\"\r\n\r\n"
+            f"{value}\r\n".encode()
+        )
+    chunks.append(
+        f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; "
+        f"filename=\"{filename}\"\r\nContent-Type: application/octet-stream\r\n\r\n".encode()
+        + content + b"\r\n"
+    )
+    chunks.append(f"--{boundary}--\r\n".encode())
+    req = urllib.request.Request(url + path, data=b"".join(chunks), method="POST")
+    req.add_header("Authorization", f"Bearer {TOKEN}")
+    req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+    return urllib.request.urlopen(req)
+
+
 def test_health_needs_no_auth(srv):
     url, _ = srv
     assert json.load(_req(url, "/health", token=None))["ok"] is True
@@ -71,8 +100,13 @@ def test_chat_streams_and_persists(srv):
     assert resp.headers["Content-Type"].startswith("text/event-stream")
     ev = _sse_events(resp)
     deltas = [e["text"] for e in ev if e["type"] == "delta"]
+    statuses = [e for e in ev if e["type"] == "status"]
     done = ev[-1]
     assert deltas == ["안녕", "하세요"]
+    assert [event["code"] for event in statuses] == [
+        "preparing", "checking_context", "planning", "generating", "saving",
+    ]
+    assert all(re.search(r"[가-힣]", event["label"]) for event in statuses)
     assert done["type"] == "done" and done["provider"] == "claude"
     msgs = store.list_messages(done["session_id"])
     assert [m["role"] for m in msgs] == ["user", "assistant"]
@@ -424,6 +458,197 @@ def test_artifact_served_after_source_deleted(srv, monkeypatch, tmp_path):
     assert resp.read() == original_bytes
 
 
+def test_workspace_file_preview_is_scoped_and_tokenized(srv, monkeypatch, tmp_path):
+    url, _ = srv
+    monkeypatch.setenv("KAIROS_CONFIG_DIR", str(tmp_path / "cfg"))
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    doc = workspace / "draft.md"
+    doc.write_text("# preview", encoding="utf-8")
+    outside = tmp_path / "outside.md"
+    outside.write_text("secret", encoding="utf-8")
+    _req(url, "/settings", {"workspace_dir": str(workspace)}, method="PUT")
+
+    path = urllib.parse.quote(str(doc), safe="")
+    response = _req(url, f"/workspace-file?path={path}&token={TOKEN}", token=None)
+    assert response.headers["Content-Type"] == "text/markdown"
+    assert response.read().decode("utf-8") == "# preview"
+
+    review = workspace / "theology.review.json"
+    review.write_text('{"schema":"kairos.theology-review.v1"}', encoding="utf-8")
+    review_path = urllib.parse.quote(str(review), safe="")
+    response = _req(
+        url, f"/workspace-file?path={review_path}&token={TOKEN}", token=None)
+    assert response.headers["Content-Type"] == "application/json"
+    assert json.load(response)["schema"] == "kairos.theology-review.v1"
+
+    # Markdown 렌더러가 한글 경로를 먼저 인코딩한 경우 URLSearchParams가
+    # 퍼센트 기호를 다시 인코딩한다. 서버는 이중 인코딩도 정상화한다.
+    encoded_once = urllib.parse.quote(str(doc), safe="")
+    encoded_twice = urllib.parse.quote(encoded_once, safe="")
+    response = _req(
+        url, f"/workspace-file?path={encoded_twice}&token={TOKEN}", token=None)
+    assert response.read().decode("utf-8") == "# preview"
+
+    with pytest.raises(urllib.error.HTTPError) as error:
+        _req(url, f"/workspace-file?path={path}", token=None)
+    assert error.value.code == 401
+
+    outside_path = urllib.parse.quote(str(outside), safe="")
+    with pytest.raises(urllib.error.HTTPError) as error:
+        _req(url, f"/workspace-file?path={outside_path}&token={TOKEN}", token=None)
+    assert error.value.code == 404
+
+
+def test_workspace_markdown_edit_versions_and_learns(srv, monkeypatch, tmp_path):
+    url, store = srv
+    monkeypatch.setenv("KAIROS_CONFIG_DIR", str(tmp_path / "cfg"))
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    output = tmp_path / "output"
+    output.mkdir()
+    doc = workspace / "draft.md"
+    doc.write_text("AI가 쓴 문장\n", encoding="utf-8")
+    _req(url, "/settings", {
+        "workspace_dir": str(workspace), "output_dir": str(output),
+    }, method="PUT")
+    session_id = store.create_session("설교 원고")
+    message_id = store.add_message(
+        session_id, "assistant", [{"type": "text", "text": f"[원고]({doc})"}])
+
+    result = json.load(_req(url, "/workspace-file", {
+        "path": str(doc),
+        "content": "목사님이 다듬은 문장\n적용 문장\n",
+        "message_id": message_id,
+    }, method="PUT"))
+
+    assert result["changed"] is True and result["learned"] is True
+    assert result["additions"] == 2 and result["deletions"] == 1
+    assert doc.read_text(encoding="utf-8") == "목사님이 다듬은 문장\n적용 문장\n"
+    assert Path(result["version_path"]).read_text(encoding="utf-8") == "AI가 쓴 문장\n"
+    revisions = store.list_document_revisions()
+    assert len(revisions) == 1
+    assert "목사님이 다듬은 문장" in revisions[0]["diff"]
+    feedback = store.feedback_for_message(message_id)
+    assert feedback[-1]["kind"] == "correction"
+    mirrored = next(output.glob(f"session-{session_id}-*")) / "draft.md"
+    assert mirrored.read_text(encoding="utf-8") == "목사님이 다듬은 문장\n적용 문장\n"
+    mirrored_versions = list(
+        (mirrored.parent / ".kairos-versions" / "draft").glob("*-before.md"))
+    assert len(mirrored_versions) == 1
+    assert mirrored_versions[0].read_text(encoding="utf-8") == "AI가 쓴 문장\n"
+
+
+def test_reviews_lists_structured_review_files(srv, monkeypatch, tmp_path):
+    url, _ = srv
+    monkeypatch.setenv("KAIROS_CONFIG_DIR", str(tmp_path / "cfg"))
+    output = tmp_path / "output"
+    output.mkdir()
+    valid = output / "pastor.review.json"
+    valid.write_text(json.dumps({
+        "schema": "kairos.theology-review.v1",
+        "title": "신학 승인",
+        "review_status": "in_review",
+        "claims": [
+            {"id": "A", "status": "approved"},
+            {"id": "B", "status": "pending"},
+        ],
+    }, ensure_ascii=False), encoding="utf-8")
+    (output / "ordinary.json").write_text('{"claims":[]}', encoding="utf-8")
+    _req(url, "/settings", {"output_dir": str(output)}, method="PUT")
+
+    reviews = json.load(_req(url, "/reviews"))["reviews"]
+
+    assert len(reviews) == 1
+    assert reviews[0]["path"] == str(valid.resolve())
+    assert reviews[0]["title"] == "신학 승인"
+    assert reviews[0]["decided"] == 1
+    assert reviews[0]["total"] == 2
+
+
+def test_review_save_promotes_approved_claims(srv, monkeypatch, tmp_path):
+    url, _ = srv
+    monkeypatch.setenv("KAIROS_CONFIG_DIR", str(tmp_path / "cfg"))
+    workspace = tmp_path / "workspace"
+    output = tmp_path / "output"
+    workspace.mkdir()
+    output.mkdir()
+    review = output / "pastor.review.json"
+    review.write_text(json.dumps({
+        "schema": "kairos.theology-review.v1",
+        "claims": [{"id": "SOT-1", "domain": "soteriology",
+                    "claim": "구원은 은혜다.", "status": "pending"}],
+    }, ensure_ascii=False), encoding="utf-8")
+    _req(url, "/settings", {
+        "workspace_dir": str(workspace), "output_dir": str(output),
+    }, method="PUT")
+    updated = {
+        "schema": "kairos.theology-review.v1",
+        "claims": [{"id": "SOT-1", "domain": "soteriology",
+                    "claim": "구원은 은혜다.", "status": "approved"}],
+    }
+
+    result = json.load(_req(url, "/workspace-file", {
+        "path": str(review),
+        "content": json.dumps(updated, ensure_ascii=False),
+    }, method="PUT"))
+
+    assert result["promoted"]["approved"] == 1
+    profile = workspace / "authors" / "main_pastor" / "approved-sermon-rag.json"
+    assert json.loads(profile.read_text(encoding="utf-8"))["approved_count"] == 1
+
+
+def test_chat_injects_approved_sermon_rag(srv, monkeypatch, tmp_path):
+    url, _ = srv
+    monkeypatch.setenv("KAIROS_CONFIG_DIR", str(tmp_path / "cfg"))
+    workspace = tmp_path / "workspace"
+    output = tmp_path / "output"
+    workspace.mkdir()
+    output.mkdir()
+    (output / "pastor.review.json").write_text(json.dumps({
+        "schema": "kairos.theology-review.v1",
+        "claims": [{
+            "id": "CHR-1", "domain": "christology",
+            "claim": "설교는 예수 그리스도의 십자가와 부활로 수렴한다.",
+            "status": "approved",
+        }],
+    }, ensure_ascii=False), encoding="utf-8")
+    corpus = output / "distilled"
+    corpus.mkdir()
+    (corpus / "corpus-manifest.json").write_text(json.dumps({
+        "sermons": [{
+            "article": "2026-resurrection",
+            "date": "2026-04-05",
+            "title": "부활의 승리",
+            "passage": "고린도전서 15:20",
+            "summary": "예수님의 부활",
+            "definition_evidence": [{
+                "marker": "W2", "excerpt": "구원은 부활의 생명이다.",
+            }],
+        }],
+    }, ensure_ascii=False), encoding="utf-8")
+    _req(url, "/settings", {
+        "workspace_dir": str(workspace), "output_dir": str(output),
+    }, method="PUT")
+    monkeypatch.setenv(
+        "KAIROS_CLAUDE_CMD", f"{sys.executable} {FAKES/'fake_argv_dump.py'}")
+
+    events = _sse_events(_req(
+        url, "/chat", {"text": "@claude 부활 설교 기획해줘"}))
+    done = events[-1]
+    messages = json.load(_req(
+        url, f"/messages?session_id={done['session_id']}"))["messages"]
+    prompt = messages[-1]["content"][0]["text"]
+
+    assert done["sermon_rag"] >= 2
+    status_codes = [event["code"] for event in events if event["type"] == "status"]
+    assert "searching_sermons" in status_codes
+    assert "organizing_evidence" in status_codes
+    assert "목사님 승인 신학" in prompt
+    assert "CHR-1" in prompt
+    assert "부활의 승리" in prompt
+
+
 def test_setup_status_shape(srv):
     url, _ = srv
     st = json.load(_req(url, "/setup/status"))
@@ -453,3 +678,50 @@ def test_setup_install_workspace_extracts_zip(srv, tmp_path, monkeypatch):
     resp = json.load(_req(url, "/setup/install-workspace", {}))
     assert resp["workspace_dir"] == str(docs / "publish-agent")
     assert resp["skills"] >= 1
+
+
+def test_presentation_upload_status_and_download(srv, monkeypatch):
+    url, _ = srv
+    monkeypatch.setenv("KAIROS_PRESENTATION_FAKE", "1")
+    body = b"# Lesson\n\nImportant point\n"
+    created = json.load(_multipart_req(
+        url, "/presentations", "lesson.md", body,
+        {"title": "테스트 강의", "provider": "codex", "slide_count": 8},
+    ))
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        job = json.load(_req(url, f"/presentations/{created['id']}"))
+        if job["status"] in {"completed", "failed"}:
+            break
+        time.sleep(0.05)
+    assert job["status"] == "completed", job
+    jobs = json.load(_req(url, "/presentations"))["jobs"]
+    assert jobs[0]["id"] == created["id"]
+    result = _req(url, f"/presentations/{created['id']}/download")
+    assert result.headers["Content-Type"].startswith(
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation")
+    assert result.read().startswith(b"PK")
+    direct = _req(
+        url,
+        f"/presentations/{created['id']}/download?token={TOKEN}",
+        token=None,
+    )
+    assert direct.read().startswith(b"PK")
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        _req(url, f"/presentations/{created['id']}/download", token=None)
+    assert exc.value.code == 401
+    opened = []
+    monkeypatch.setattr(
+        "core.server._open_local_path",
+        lambda path, reveal=False: opened.append((path, reveal)),
+    )
+    response = json.load(_req(
+        url, f"/presentations/{created['id']}/open", {}, method="POST"
+    ))
+    assert response["ok"] is True
+    assert opened[-1][1] is False
+    response = json.load(_req(
+        url, f"/presentations/{created['id']}/reveal", {}, method="POST"
+    ))
+    assert response["ok"] is True
+    assert opened[-1][1] is True

@@ -97,3 +97,13 @@ def test_no_workspace_dir_keeps_default_cwd(monkeypatch, tmp_path):
     from core.providers import claude
     done = list(claude.chat("hi"))[-1]
     assert Path(done["text"]).resolve() != tmp_path.resolve()
+
+
+def test_scoped_workflow_allowed_tools_from_cfg(monkeypatch):
+    monkeypatch.setenv("KAIROS_CLAUDE_CMD", f"{sys.executable} {FAKE_ARGV}")
+    from core.providers import claude
+    spec = "Bash(C:/Python/python.exe D:/ppt-master/scripts/*:*)"
+    done = list(claude.chat("hi", cfg={"claude_allowed_tools": [spec]}))[-1]
+    argv = _json.loads(done["text"])
+    pairs = list(zip(argv, argv[1:]))
+    assert ("--allowedTools", spec) in pairs

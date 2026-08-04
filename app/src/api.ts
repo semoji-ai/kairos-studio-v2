@@ -6,16 +6,24 @@ declare global {
 const TOKEN = window.__KAIROS__?.token ?? "";
 const HDRS = { "Authorization": `Bearer ${TOKEN}`, "Content-Type": "application/json" };
 
+export function workspaceFileUrl(path: string): string {
+  const params = new URLSearchParams({ path, token: TOKEN });
+  return `/workspace-file?${params.toString()}`;
+}
+
 export type Msg = {
   id: number; session_id: number; role: "user" | "assistant";
-  content: { type: string; text?: string; artifact?: string; title?: string }[];
+  content: {
+    type: string; text?: string; artifact?: string; title?: string; source_path?: string;
+  }[];
   provider?: string | null; model?: string | null;
 };
 export type Session = { id: number; title: string; created_at: string };
 export type ChatEvent =
   | { type: "delta"; text: string }
   | { type: "progress"; text: string }
-  | { type: "done"; message_id: number; session_id: number; provider: string; recalled?: number; artifacts?: number }
+  | { type: "status"; code: string; label: string; detail?: string }
+  | { type: "done"; message_id: number; session_id: number; provider: string; recalled?: number; sermon_rag?: number; artifacts?: number }
   | { type: "error"; error: string };
 
 export async function health(): Promise<boolean> {
@@ -66,6 +74,7 @@ export type Settings = {
   codex_sandbox: "read-only" | "workspace-write";
   claude_permission_mode: "default" | "acceptEdits";
   workspace_dir: string | null;
+  output_dir: string | null;
 };
 export type WorkspaceInfo = {
   workspace_dir: string | null; exists: boolean | null;
@@ -134,6 +143,129 @@ export async function runDistill(): Promise<{ added: string[]; error?: string; s
   const j = await r.json();
   if (!r.ok) throw new Error(j.error ?? `HTTP ${r.status}`);
   return j;
+}
+
+export type DocumentSaveResult = {
+  changed: boolean;
+  path: string;
+  version_path: string | null;
+  additions: number;
+  deletions: number;
+  learned: boolean;
+  promoted?: {
+    approved: number;
+    historical?: number;
+    profile_path: string | null;
+    theology_path: string | null;
+    pattern_path?: string | null;
+  } | null;
+};
+
+export async function saveWorkspaceDocument(
+  path: string,
+  content: string,
+  messageId?: number,
+): Promise<DocumentSaveResult> {
+  const r = await fetch("/workspace-file", {
+    method: "PUT",
+    headers: HDRS,
+    body: JSON.stringify({ path, content, message_id: messageId }),
+  });
+  const payload = await r.json();
+  if (!r.ok) throw new Error(payload.error ?? `HTTP ${r.status}`);
+  return payload;
+}
+
+export type ReviewSummary = {
+  path: string;
+  title: string;
+  status: "in_review" | "reviewed";
+  total: number;
+  decided: number;
+  updated_at?: string | null;
+};
+
+export async function listReviews(): Promise<ReviewSummary[]> {
+  const r = await fetch("/reviews", { headers: HDRS });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return (await r.json()).reviews;
+}
+
+export type PresentationJob = {
+  id: string; title: string; source_name: string;
+  status: "queued" | "running" | "completed" | "failed";
+  stage: string; progress: number; provider: "codex" | "claude";
+  created_at: string; updated_at: string; log: string[];
+  result?: string | null; error?: string | null;
+  options?: { style_preset?: string; image_style?: string; tone?: string; slide_count?: number };
+};
+export type PresentationEngines = {
+  ppt_master: { available: boolean; path: string | null };
+  codex_fleet: { available: boolean; path: string | null };
+  prompt_kit: { available: boolean; path: string | null };
+  worker: { available: boolean; state?: "idle" | "working" | "stopped"; job_id?: string | null };
+  styles: { id: string; name: string; description: string; tone: string }[];
+  default_style: string;
+  image_styles: { id: string; name: string; description: string }[];
+  default_image_style: string;
+};
+
+export async function presentationEngines(): Promise<PresentationEngines> {
+  const r = await fetch("/presentations/engines", { headers: HDRS });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+export async function listPresentations(): Promise<PresentationJob[]> {
+  const r = await fetch("/presentations", { headers: HDRS });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return (await r.json()).jobs;
+}
+export async function createPresentation(
+  file: File,
+  options: {
+    title: string; audience: string; slide_count: number; aspect: "16:9" | "4:3";
+    tone: string; provider: "codex" | "claude"; use_ai_images: boolean;
+    speaker_notes: boolean; style_preset: string; image_style: string;
+  },
+): Promise<PresentationJob> {
+  const form = new FormData();
+  form.append("file", file, file.name);
+  Object.entries(options).forEach(([key, value]) => form.append(key, String(value)));
+  const r = await fetch("/presentations", {
+    method: "POST", headers: { "Authorization": `Bearer ${TOKEN}` }, body: form,
+  });
+  const payload = await r.json();
+  if (!r.ok) throw new Error(payload.error ?? `HTTP ${r.status}`);
+  return payload;
+}
+export function downloadPresentation(job: PresentationJob): void {
+  const params = new URLSearchParams({ token: TOKEN });
+  const a = document.createElement("a");
+  a.href = `/presentations/${job.id}/download?${params.toString()}`;
+  a.download = `${job.title || "presentation"}.pptx`;
+  a.style.display = "none";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+export async function openPresentation(
+  job: PresentationJob, reveal = false,
+): Promise<{ ok: boolean; path: string }> {
+  const action = reveal ? "reveal" : "open";
+  const r = await fetch(`/presentations/${job.id}/${action}`, {
+    method: "POST", headers: HDRS, body: "{}",
+  });
+  const payload = await r.json();
+  if (!r.ok) throw new Error(payload.error ?? `HTTP ${r.status}`);
+  return payload;
+}
+export async function retryPresentation(id: string): Promise<PresentationJob> {
+  const r = await fetch(`/presentations/${id}/retry`, {
+    method: "POST", headers: HDRS, body: "{}",
+  });
+  const payload = await r.json();
+  if (!r.ok) throw new Error(payload.error ?? `HTTP ${r.status}`);
+  return payload;
 }
 
 /** POST /chat 후 SSE 스트림을 콜백으로 흘린다. done/error에서 종료. */
