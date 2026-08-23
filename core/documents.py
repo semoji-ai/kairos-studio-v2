@@ -169,7 +169,7 @@ def _key(book: int, chapter: int, verse: int) -> str | None:
         return None
     if not 1 <= verse <= MAX_VERSE:
         return None
-    return f"{book}:{chapter}:{verse}"
+    return bible_coverage.verse_key(book, chapter, verse)
 
 
 def ref_key(reference: str) -> str | None:

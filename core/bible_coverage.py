@@ -45,6 +45,21 @@ _ALIAS = {"애가": "예레미야애가", "계시록": "요한계시록", "살�
 
 _verse_counts_cache: dict[str, dict] = {}
 _verse_text_cache: dict[str, dict] = {}
+_sermon_history_cache: dict[str, tuple[float, dict]] = {}
+
+# 한 설교의 passage에서 펼칠 최대 절 수. "시편 119편" 같은 통짜 지정이 집계를
+# 폭발시키지 않게 자른다.
+MAX_PASSAGE_VERSES = 60
+
+
+def verse_key(book: int, chapter: int, verse: int) -> str:
+    """canonical 장절 키 — 모듈 간 조인 키 형식의 단일 출처.
+
+    core/documents.py 의 ref_key()도 이 형식을 쓴다. 성경 DB(공통 번들)와
+    워크스페이스(목사님별) 양쪽 자료를 같은 키로 맞대려면 형식이 한 곳에서만
+    정의돼야 한다.
+    """
+    return f"{book}:{chapter}:{verse}"
 
 
 def book_num(name: str) -> int | None:
@@ -177,6 +192,59 @@ def _read_fm(path: Path) -> dict:
         if mm:
             fm[mm.group(1)] = mm.group(2).strip().strip('"')
     return fm
+
+
+def sermon_history(workspace_dir: str | Path) -> dict[str, dict]:
+    """{장절키: {"count": n, "last_date": "YYYY-MM-DD", "last_title": str}}.
+
+    publish_agent 워크스페이스의 설교 본문 이력이다. 카이로스를 늦게 설치한
+    목사님은 축적 대부분이 여기 있고 kairos.db에는 없으므로, 성경 검색 결과에
+    맥락을 붙이려면 이쪽을 봐야 한다.
+
+    순위 계산에는 쓰지 않는다 — 커버리지 공백을 찾는 설교 준비와 신학적 중심을
+    확인하는 질문은 원하는 방향이 정반대라, 표시만 하고 판단은 사람이 한다.
+
+    sermons 디렉터리의 mtime으로 캐시를 무효화한다. 새 설교가 추가되면 부모
+    디렉터리 mtime이 바뀌어 자동 갱신되지만, 기존 index.md만 고친 경우는
+    반영되지 않는다 (다음 재시작에 반영).
+    """
+    ws = Path(workspace_dir).expanduser()
+    sermons_dir = ws / "wiki" / "sermons"
+    try:
+        stamp = sermons_dir.stat().st_mtime
+    except OSError:
+        return {}
+
+    key = str(ws)
+    cached = _sermon_history_cache.get(key)
+    if cached and cached[0] == stamp:
+        return cached[1]
+
+    history: dict[str, dict] = {}
+    for d in sorted(p for p in sermons_dir.iterdir() if p.is_dir()):
+        fm = _read_fm(d / "index.md")
+        passage = fm.get("passage", "")
+        if not passage:
+            continue
+        date = fm.get("date", "")
+        title = fm.get("title", d.name)
+        seen: set[str] = set()  # 한 설교가 같은 절을 여러 번 세지 않게
+        for bn, ch, v1, v2 in parse_passage(passage):
+            end = min(v2, v1 + MAX_PASSAGE_VERSES - 1)
+            for v in range(v1, end + 1):
+                k = verse_key(bn, ch, v)
+                if k in seen:
+                    continue
+                seen.add(k)
+                slot = history.setdefault(
+                    k, {"count": 0, "last_date": "", "last_title": ""})
+                slot["count"] += 1
+                if date >= slot["last_date"]:
+                    slot["last_date"] = date
+                    slot["last_title"] = title
+
+    _sermon_history_cache[key] = (stamp, history)
+    return history
 
 
 def coverage(workspace_dir: str | Path) -> dict:

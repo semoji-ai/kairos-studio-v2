@@ -71,6 +71,32 @@ def _is_relative_to(path: Path, root: Path) -> bool:
         return False
 
 
+def _annotate_sermon_history(refs: list[dict], workspace_dir: str | None) -> None:
+    """검색된 구절에 목사님의 설교 이력을 주석으로 붙인다 (순위는 건드리지 않음).
+
+    카이로스를 늦게 설치한 목사님은 축적 대부분이 publish_agent 워크스페이스에
+    있고 kairos.db 피드백은 비어 있다. 이 라벨은 그 공백을 정보로 메운다 —
+    이미 다룬 본문인지 아닌지는 사람이 판단할 몫이라 순위는 그대로 둔다.
+    """
+    if not refs or not workspace_dir:
+        return
+    try:
+        history = bible_coverage.sermon_history(workspace_dir)
+    except Exception:
+        return
+    if not history:
+        return
+    for ref in refs:
+        key = documents.ref_key(ref.get("reference", ""))
+        entry = history.get(key) if key else None
+        if not entry:
+            continue
+        note = f"목사님 설교 {entry['count']}회"
+        if entry.get("last_date"):
+            note += f"·최근 {entry['last_date']}"
+        ref["sermon_note"] = note
+
+
 def build_prompt(text: str, rec: dict) -> tuple[str, int]:
     """스펙 ③ 형식으로 회상 결과를 원문 앞에 조립.
 
@@ -98,6 +124,7 @@ def build_prompt(text: str, rec: dict) -> tuple[str, int]:
             # 원전분해 등 대용량 항목이 프롬프트를 오염시키지 않게 항목당 길이 제한
             lines = "\n".join(
                 f"[{r.get('reference', '')}] {str(r.get('content', ''))[:180]}"
+                + (f" ({r['sermon_note']})" if r.get("sermon_note") else "")
                 for r in refs[:3]
             )
             blocks.append(f"[성경 자료 검색 — 관련 구절]\n{lines}")
@@ -916,6 +943,8 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
                         bible_refs = documents.search(
                             bible_db, text, limit=3,
                             ref_feedback=store.reference_feedback_weights())
+                        _annotate_sermon_history(
+                            bible_refs, cfg.get("workspace_dir"))
                         rec["bible_refs"] = bible_refs
                     except Exception:
                         rec["bible_refs"] = []

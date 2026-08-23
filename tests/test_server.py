@@ -413,6 +413,58 @@ def test_build_prompt_trims_oversized_block():
     assert n < 5  # 블록이 캡을 넘으면 스니펫이 줄어든다
 
 
+def test_annotate_sermon_history_labels_preached_verses(tmp_path):
+    """워크스페이스 설교 이력이 라벨로만 붙고 순위·순서는 그대로여야 한다."""
+    from core.server import _annotate_sermon_history
+
+    art = tmp_path / "wiki" / "sermons" / "2024-03-17_은혜"
+    art.mkdir(parents=True)
+    (art / "index.md").write_text(
+        '---\ntitle: "은혜로"\ndate: 2024-03-17\npassage: "에베소서 2:8"\n---\n본문',
+        encoding="utf-8")
+
+    refs = [{"reference": "49:2:8", "content": "은혜에 의하여"},
+            {"reference": "요한복음 3:16", "content": "하나님이 세상을"}]
+    before = [r["reference"] for r in refs]
+
+    _annotate_sermon_history(refs, str(tmp_path))
+
+    assert [r["reference"] for r in refs] == before  # 순서 불변
+    assert refs[0]["sermon_note"] == "목사님 설교 1회·최근 2024-03-17"
+    assert "sermon_note" not in refs[1]  # 설교한 적 없는 구절엔 라벨 없음
+
+
+def test_annotate_sermon_history_no_workspace_is_noop():
+    from core.server import _annotate_sermon_history
+    refs = [{"reference": "43:3:16", "content": "본문"}]
+
+    _annotate_sermon_history(refs, None)
+
+    assert refs == [{"reference": "43:3:16", "content": "본문"}]
+
+
+def test_build_prompt_renders_sermon_note(tmp_path):
+    from core.server import build_prompt
+    refs = [{"reference": "49:2:8", "content": "은혜에 의하여",
+             "sermon_note": "목사님 설교 2회·최근 2024-03-17"}]
+    rec = {"snippets": [], "avoid": [], "corrections": [], "bible_refs": refs}
+
+    prompt, _ = build_prompt("질문", rec)
+
+    assert "(목사님 설교 2회·최근 2024-03-17)" in prompt
+
+
+def test_build_prompt_omits_note_when_absent():
+    from core.server import build_prompt
+    refs = [{"reference": "49:2:8", "content": "은혜에 의하여"}]
+    rec = {"snippets": [], "avoid": [], "corrections": [], "bible_refs": refs}
+
+    prompt, _ = build_prompt("질문", rec)
+
+    assert "[49:2:8] 은혜에 의하여" in prompt
+    assert "(" not in prompt.split("---")[0].split("은혜에 의하여")[1]
+
+
 def test_build_prompt_reports_surviving_bible_refs():
     """블록에 실제로 들어간 성경 자료만 학습 신호로 귀속돼야 한다."""
     from core.server import build_prompt
