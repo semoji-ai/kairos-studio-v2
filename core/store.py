@@ -42,6 +42,13 @@ CREATE TABLE IF NOT EXISTS distill_state(
   id INTEGER PRIMARY KEY CHECK(id=1),
   last_feedback_id INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS injected_refs(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  message_id INTEGER NOT NULL REFERENCES messages(id),
+  reference TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_injected_refs_message ON injected_refs(message_id);
 CREATE TABLE IF NOT EXISTS document_revisions(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   message_id INTEGER,
@@ -110,6 +117,9 @@ class Store:
             if row is None:
                 return False
             c.execute("DELETE FROM feedback WHERE message_id IN"
+                      " (SELECT id FROM messages WHERE session_id=?)",
+                      (session_id,))
+            c.execute("DELETE FROM injected_refs WHERE message_id IN"
                       " (SELECT id FROM messages WHERE session_id=?)",
                       (session_id,))
             c.execute("DELETE FROM messages_fts WHERE session_id=?", (session_id,))
@@ -222,6 +232,40 @@ class Store:
             (message_id,),
         ).fetchall()
         return [dict(r) for r in rows]
+
+    def record_injected_refs(self, message_id: int, references: list[str]) -> int:
+        """이 답변에 주입된 성경 자료의 reference를 기록한다.
+
+        이게 있어야 나중에 그 답변이 받은 up/down 평가를 구절 단위로 되짚을 수
+        있다. 기록이 없으면 검색은 영원히 사용자 취향을 배울 수 없다.
+        """
+        rows = [(message_id, r) for r in dict.fromkeys(references) if r]
+        if not rows:
+            return 0
+        with self._conn() as c:
+            c.executemany(
+                "INSERT INTO injected_refs(message_id, reference) VALUES (?,?)",
+                rows,
+            )
+        return len(rows)
+
+    def reference_feedback_weights(self) -> dict[str, dict]:
+        """{reference: {"up": n, "down": n}} — 평가가 달린 구절만."""
+        rows = self._conn().execute(
+            """
+            SELECT ir.reference AS reference,
+                   SUM(CASE WHEN f.kind='up' THEN 1 ELSE 0 END) AS ups,
+                   SUM(CASE WHEN f.kind='down' THEN 1 ELSE 0 END) AS downs
+            FROM injected_refs ir
+            JOIN feedback f ON f.message_id = ir.message_id
+            WHERE f.kind IN ('up','down')
+            GROUP BY ir.reference
+            """
+        ).fetchall()
+        return {
+            r["reference"]: {"up": r["ups"], "down": r["downs"]}
+            for r in rows if r["ups"] or r["downs"]
+        }
 
     def list_corrections(self, limit: int = 20) -> list[dict]:
         rows = self._conn().execute(

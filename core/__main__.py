@@ -8,7 +8,7 @@ import sys
 import threading
 from pathlib import Path
 
-from core import settings
+from core import documents, settings
 from core.server import make_server
 from core.store import Store
 
@@ -43,6 +43,14 @@ def build(argv=None):
     except (OSError, sqlite3.Error):
         os.environ["KAIROS_STORE_FALLBACK"] = "1"
         store = Store(_default_data_dir() / "kairos.db")
+    # 성경 DB는 gitignore라 git pull로 갱신되지 않는다. 코드만 새로 받았을 때
+    # 낡은 관주 인덱스를 여기서 알아서 다시 짓는다 — 서버가 요청을 받기 전이라
+    # 검색과 겹치지 않는다. 실패해도(읽기 전용 번들 등) 앱은 그대로 뜬다.
+    try:
+        documents.ensure_verse_index(documents.default_db_path())
+    except Exception:
+        pass
+
     server = make_server(host, port, token, store)
     info = {"host": host, "port": server.server_address[1], "token": token}
     return server, info

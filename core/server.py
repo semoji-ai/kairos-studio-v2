@@ -71,10 +71,38 @@ def _is_relative_to(path: Path, root: Path) -> bool:
         return False
 
 
+def _annotate_sermon_history(refs: list[dict], workspace_dir: str | None) -> None:
+    """검색된 구절에 목사님의 설교 이력을 주석으로 붙인다 (순위는 건드리지 않음).
+
+    카이로스를 늦게 설치한 목사님은 축적 대부분이 publish_agent 워크스페이스에
+    있고 kairos.db 피드백은 비어 있다. 이 라벨은 그 공백을 정보로 메운다 —
+    이미 다룬 본문인지 아닌지는 사람이 판단할 몫이라 순위는 그대로 둔다.
+    """
+    if not refs or not workspace_dir:
+        return
+    try:
+        history = bible_coverage.sermon_history(workspace_dir)
+    except Exception:
+        return
+    if not history:
+        return
+    for ref in refs:
+        key = documents.ref_key(ref.get("reference", ""))
+        entry = history.get(key) if key else None
+        if not entry:
+            continue
+        note = f"목사님 설교 {entry['count']}회"
+        if entry.get("last_date"):
+            note += f"·최근 {entry['last_date']}"
+        ref["sermon_note"] = note
+
+
 def build_prompt(text: str, rec: dict) -> tuple[str, int]:
     """스펙 ③ 형식으로 회상 결과를 원문 앞에 조립.
 
     반환: (프롬프트, 주입된 스니펫 수). 회상 결과가 전부 비어 있으면 (text, 0).
+    부수효과로 rec["bible_refs_used"]에 실제로 블록에 살아남은 성경 자료를
+    남긴다 — 예산 때문에 잘린 구절까지 학습 신호로 귀속되면 안 되기 때문.
     1,500자 하드캡 초과 시 스니펫을 뒤에서부터 제거해 캡 이하로 맞춘다
     (corrections/avoid는 우선 보존). 캡은 주입 블록의 길이만 측정하며,
     사용자 텍스트의 길이는 무시한다.
@@ -96,6 +124,7 @@ def build_prompt(text: str, rec: dict) -> tuple[str, int]:
             # 원전분해 등 대용량 항목이 프롬프트를 오염시키지 않게 항목당 길이 제한
             lines = "\n".join(
                 f"[{r.get('reference', '')}] {str(r.get('content', ''))[:180]}"
+                + (f" ({r['sermon_note']})" if r.get("sermon_note") else "")
                 for r in refs[:3]
             )
             blocks.append(f"[성경 자료 검색 — 관련 구절]\n{lines}")
@@ -143,7 +172,10 @@ def build_prompt(text: str, rec: dict) -> tuple[str, int]:
         block = render_block(snippets, rules, bible_refs, document_edits)
 
     if not block:
+        rec["bible_refs_used"] = []
         return text, 0
+    # render_block이 refs[:3]만 그리므로 기록도 같은 범위로 맞춘다.
+    rec["bible_refs_used"] = bible_refs[:3]
     prompt = block + "\n\n---\n" + text
     return prompt, len(snippets)
 
@@ -881,6 +913,8 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
             except OSError:
                 task_output_dir = None
             provider_name, cleaned = route(text, cfg)
+            # 학습 회상이 꺼져 있으면 빈 채로 남는다 (주입도, 기록도 없음).
+            rec: dict = {}
             store.add_message(session_id, "user", [{"type": "text", "text": text}])
             session_ref = _last_session_ref(store, session_id, provider_name)
 
@@ -895,16 +929,22 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
             send_status("preparing", "질문을 정리하고 있습니다")
             if cfg.get("learning_recall_enabled", True):
                 send_status("checking_context", "관련 대화와 학습 내용을 확인하고 있습니다")
-                rec = recall(store, text, session_id)
+                rec.update(recall(store, text, session_id))
                 rec["rules"] = [r["rule"].replace("\n", " ").strip()
                                 for r in store.list_rules(active_only=True)]
                 rec["document_edits"] = store.list_document_revisions(limit=3)
                 # Search Bible knowledge base — 인사말 수준의 짧은 입력에는
                 # 주입하지 않는다 (무관한 구절이 맥락을 오염시키는 것 방지)
-                bible_db = Path(__file__).parent.parent / "bible_documents.db"
+                bible_db = documents.default_db_path()
                 if bible_db.exists() and len(cleaned) >= 8:
                     try:
-                        bible_refs = documents.search(bible_db, text, limit=3)
+                        # 과거 주입 구절이 받은 평가를 순위에 반영한다. 관주
+                        # 링크 확장은 documents.search 안에서 기본 동작.
+                        bible_refs = documents.search(
+                            bible_db, text, limit=3,
+                            ref_feedback=store.reference_feedback_weights())
+                        _annotate_sermon_history(
+                            bible_refs, cfg.get("workspace_dir"))
                         rec["bible_refs"] = bible_refs
                     except Exception:
                         rec["bible_refs"] = []
@@ -974,6 +1014,15 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
                 content.append({"type": "meta", "session_ref": final["session_ref"]})
             mid = store.add_message(session_id, "assistant", content,
                                     provider=provider_name, model=final.get("model"))
+            # 이 답변에 어떤 구절이 주입됐는지 남긴다 — 이후 up/down 피드백이
+            # 구절 단위 가중으로 되돌아오는 고리.
+            injected = rec.get("bible_refs_used")
+            if injected:
+                try:
+                    store.record_injected_refs(
+                        mid, [r.get("reference", "") for r in injected])
+                except Exception:
+                    pass
             try:
                 parts = collect(final["text"], cfg.get("workspace_dir"),
                                 self._data_dir(), mid)

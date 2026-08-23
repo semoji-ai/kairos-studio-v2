@@ -69,3 +69,65 @@ def test_verses_block_mechanical_lookup(tmp_path):
     assert "로마서 8:3 로마서 본문 3" in blk
     assert "8:4" not in blk  # 요청 범위 밖은 미포함
     assert bible_coverage.verses_block(tmp_path, "안녕하세요") == ""
+
+
+def _sermon(ws, name, *, title, date, passage):
+    art = ws / "wiki" / "sermons" / name
+    art.mkdir(parents=True)
+    (art / "index.md").write_text(
+        f'---\ntitle: "{title}"\ndate: {date}\npassage: "{passage}"\n---\n본문',
+        encoding="utf-8")
+
+
+def test_verse_key_is_shared_join_format():
+    from core import documents
+    assert bible_coverage.verse_key(43, 3, 16) == "43:3:16"
+    # 공통 번들 DB 쪽 ref_key()와 같은 형식이어야 조인이 된다
+    assert documents.ref_key("요한복음 3:16") == bible_coverage.verse_key(43, 3, 16)
+
+
+def test_sermon_history_counts_and_keeps_latest(tmp_path):
+    _sermon(tmp_path, "2020-01-01_옛날", title="옛 설교", date="2020-01-01",
+            passage="요한복음 3:16-17")
+    _sermon(tmp_path, "2024-03-17_최근", title="최근 설교", date="2024-03-17",
+            passage="요한복음 3:16")
+
+    history = bible_coverage.sermon_history(tmp_path)
+
+    assert history["43:3:16"] == {
+        "count": 2, "last_date": "2024-03-17", "last_title": "최근 설교"}
+    # 범위의 나머지 절도 각각 집계된다
+    assert history["43:3:17"]["count"] == 1
+    assert history["43:3:17"]["last_title"] == "옛 설교"
+
+
+def test_sermon_history_counts_a_verse_once_per_sermon(tmp_path):
+    # 같은 절이 passage 안에서 두 번 언급돼도 한 설교는 1회다
+    _sermon(tmp_path, "2024-01-01_중복", title="중복", date="2024-01-01",
+            passage="창세기 1:1, 1:1")
+
+    assert bible_coverage.sermon_history(tmp_path)["1:1:1"]["count"] == 1
+
+
+def test_sermon_history_caps_huge_passage(tmp_path):
+    _sermon(tmp_path, "2024-01-01_통짜", title="통짜", date="2024-01-01",
+            passage="시편 119:1-176")
+
+    history = bible_coverage.sermon_history(tmp_path)
+
+    assert len(history) == bible_coverage.MAX_PASSAGE_VERSES
+
+
+def test_sermon_history_empty_without_workspace(tmp_path):
+    assert bible_coverage.sermon_history(tmp_path) == {}
+    assert bible_coverage.sermon_history(tmp_path / "없는곳") == {}
+
+
+def test_sermon_history_ignores_passageless_articles(tmp_path):
+    art = tmp_path / "wiki" / "sermons" / "2024-01-01_무본문"
+    art.mkdir(parents=True)
+    (art / "index.md").write_text(
+        '---\ntitle: "본문 없음"\ndate: 2024-01-01\n---\n본문', encoding="utf-8")
+
+    assert bible_coverage.sermon_history(tmp_path) == {}
+
