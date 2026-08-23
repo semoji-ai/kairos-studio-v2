@@ -3,6 +3,8 @@ Bible document store — SQLite FTS5 + bigram search over imported Bible texts, 
 Separate from chat/feedback history; used for knowledge base retrieval.
 """
 
+from __future__ import annotations
+
 import json
 import re
 import sqlite3
