@@ -115,3 +115,43 @@ def test_delete_session_clears_injected_refs(store):
     orphans = store._conn().execute(
         "SELECT COUNT(*) AS n FROM injected_refs").fetchone()["n"]
     assert orphans == 0
+
+
+def test_existing_db_gains_injected_refs_on_open(tmp_path):
+    """git pull로 코드만 받아도 기존 kairos.db가 그대로 열리고 이관돼야 한다."""
+    import sqlite3
+
+    db_path = tmp_path / "kairos.db"
+    # injected_refs가 없던 시절의 최소 스키마 + 기존 데이터
+    conn = sqlite3.connect(str(db_path))
+    conn.executescript("""
+        CREATE TABLE sessions(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          title TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')));
+        CREATE TABLE messages(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          session_id INTEGER NOT NULL REFERENCES sessions(id),
+          role TEXT NOT NULL, content_json TEXT NOT NULL,
+          provider TEXT, model TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')));
+        INSERT INTO sessions(title) VALUES ('옛 세션');
+        INSERT INTO messages(session_id, role, content_json)
+          VALUES (1, 'user', '[{"type":"text","text":"옛 질문"}]');
+    """)
+    conn.commit()
+    conn.close()
+
+    store = Store(db_path)
+
+    # 기존 대화는 보존되고
+    assert [m["content"][0]["text"] for m in store.list_messages(1)] == ["옛 질문"]
+    # 새 테이블은 조용히 생겨 바로 쓸 수 있다
+    mid = store.add_message(1, "assistant", [{"type": "text", "text": "답"}])
+    store.record_injected_refs(mid, ["43:3:16"])
+    store.add_feedback(mid, "up")
+    assert store.reference_feedback_weights() == {"43:3:16": {"up": 1, "down": 0}}
+    # 기존 메시지도 FTS 색인에 백필된다
+    assert store._conn().execute(
+        "SELECT COUNT(*) FROM messages_fts").fetchone()[0] == 2
+

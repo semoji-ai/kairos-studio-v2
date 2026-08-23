@@ -99,6 +99,16 @@ def create_db(db_path: Path) -> sqlite3.Connection:
         "CREATE INDEX IF NOT EXISTS idx_verse_refs_doc ON verse_refs(doc_id)"
     )
 
+    # 인덱스 판 버전. bible_documents.db는 gitignore라 git pull로 갱신되지
+    # 않으므로, 코드가 올라갔을 때 낡은 인덱스를 스스로 알아보고 다시 지어야
+    # 한다. 링크 생성 규칙이 바뀌면 VERSE_INDEX_VERSION을 올린다.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS verse_index_meta (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+    """)
+
     conn.commit()
     return conn
 
@@ -154,6 +164,20 @@ _PACKED_REF_RE = re.compile(r"^(?:[A-Za-z_]*_)?(\d{2})(\d{3})(\d{3})$")
 # 한 참조에서 펼칠 최대 절 수. "시119:1-176" 같은 범위가 링크 테이블을
 # 폭발시키지 않게 자른다.
 VERSE_RANGE_CAP = 30
+
+
+# 관주 인덱스 판 버전 — 링크 생성 규칙이 바뀌면 올린다. 시작 시 저장된 값과
+# 다르면 자동으로 다시 짓는다.
+VERSE_INDEX_VERSION = 1
+
+
+def default_db_path() -> Path:
+    """번들·체크아웃 양쪽에서 통하는 성경 DB 위치.
+
+    개발 체크아웃에서는 core/ 옆의 리포 루트, 릴리스 번들에서는 core/가
+    resources/core/ 이므로 resources/bible_documents.db 로 같이 풀린다.
+    """
+    return Path(__file__).resolve().parent.parent / "bible_documents.db"
 
 
 # 개역개정 실측 최대치. 책별 정확한 절 수 검증은 워크스페이스 데이터가 있어야
@@ -229,6 +253,61 @@ def parse_refs(text: str, cap: int = VERSE_RANGE_CAP) -> list[str]:
     return out
 
 
+def _stored_index_version(cursor) -> int | None:
+    try:
+        row = cursor.execute(
+            "SELECT value FROM verse_index_meta WHERE key='version'"
+        ).fetchone()
+    except sqlite3.Error:
+        return None  # 메타 테이블 자체가 없는 구판
+    if row is None:
+        return None
+    try:
+        return int(row[0])
+    except (TypeError, ValueError):
+        return None
+
+
+def ensure_verse_index(db_path: Path) -> dict:
+    """관주 인덱스가 최신이 아니면 다시 짓는다. 서버 시작 시 1회 호출.
+
+    bible_documents.db는 gitignore라 git pull로 갱신되지 않는다 — 각 머신이
+    로컬에서 구운 사본을 갖고 있다. 그래서 코드만 새로 받으면 인덱스는 낡은
+    채로 남고, 사용자가 스크립트를 손수 돌려야 하는 상황이 된다. 여기서 스스로
+    알아보고 짓게 해 pull 한 번으로 끝나게 한다.
+
+    설치된 앱 번들처럼 DB가 읽기 전용이면 조용히 건너뛴다 — 그쪽은 빌드 타임에
+    이미 구워져 나온다. 어느 경우든 실패가 앱 기동을 막지 않는다.
+    """
+    path = Path(db_path)
+    if not path.is_file():
+        return {"status": "no_db"}
+
+    try:
+        conn = sqlite3.connect(str(path))
+        try:
+            cursor = conn.cursor()
+            if (_has_verse_index(cursor)
+                    and _stored_index_version(cursor) == VERSE_INDEX_VERSION):
+                return {"status": "current"}
+        finally:
+            conn.close()
+    except sqlite3.Error as exc:
+        log.warning(f"verse index check failed: {exc}")
+        return {"status": "error", "error": str(exc)}
+
+    try:
+        stats = rebuild_verse_index(path)
+    except sqlite3.Error as exc:
+        # 읽기 전용 번들이 여기로 온다. 확장만 없을 뿐 BM25 검색은 그대로다.
+        log.warning(f"verse index rebuild skipped (read-only?): {exc}")
+        return {"status": "unwritable", "error": str(exc)}
+
+    log.info(
+        "verse index rebuilt on startup: %(verse_links)s links", stats)
+    return {"status": "rebuilt", **stats}
+
+
 def rebuild_verse_index(db_path: Path, sample_limit: int = 10) -> dict:
     """documents 전체를 훑어 verse_refs / verse_links 를 다시 만든다.
 
@@ -284,6 +363,11 @@ def rebuild_verse_index(db_path: Path, sample_limit: int = 10) -> dict:
             )
             link_rows += 1
 
+    cursor.execute(
+        "INSERT INTO verse_index_meta(key, value) VALUES ('version', ?)"
+        " ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        (str(VERSE_INDEX_VERSION),),
+    )
     conn.commit()
 
     stats = {
@@ -715,6 +799,9 @@ def search(db_path: Path, query: str, limit: int = 5,
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
+    # 인덱스 재구축이 다른 곳에서 돌고 있어도 잠깐 기다렸다 읽는다. 이게 없으면
+    # "database is locked"가 아래 except로 떨어져 검색이 빈손이 된다.
+    cursor.execute("PRAGMA busy_timeout = 3000")
 
     # Build FTS MATCH query using bigrams
     bigram_query = _bigrams(query)

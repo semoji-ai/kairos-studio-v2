@@ -1,6 +1,8 @@
 """Tests for Bible documents module."""
 
 import json
+import os
+import sys
 from pathlib import Path
 import sqlite3
 import pytest
@@ -310,6 +312,83 @@ def test_has_verse_index_detects_both_tables(tmp_path):
     fresh = documents.create_db(tmp_path / "fresh.db")
     assert documents._has_verse_index(fresh.cursor()) is True
     fresh.close()
+
+
+# --- 시작 시 자동 구축 -------------------------------------------------------
+
+
+def test_ensure_verse_index_builds_on_legacy_db(tmp_path):
+    """git pull로 코드만 받은 머신에서 인덱스가 스스로 지어져야 한다."""
+    db_path = _legacy_db(tmp_path / "pulled.db")
+
+    result = documents.ensure_verse_index(db_path)
+
+    assert result["status"] == "rebuilt"
+    conn = sqlite3.connect(str(db_path))
+    assert documents._has_verse_index(conn.cursor()) is True
+    assert documents._stored_index_version(conn.cursor()) == \
+        documents.VERSE_INDEX_VERSION
+    conn.close()
+
+
+def test_ensure_verse_index_is_noop_when_current(linked_db):
+    documents.rebuild_verse_index(linked_db)
+
+    assert documents.ensure_verse_index(linked_db)["status"] == "current"
+
+
+def test_ensure_verse_index_rebuilds_on_version_bump(linked_db, monkeypatch):
+    documents.rebuild_verse_index(linked_db)
+    monkeypatch.setattr(documents, "VERSE_INDEX_VERSION",
+                        documents.VERSE_INDEX_VERSION + 1)
+
+    assert documents.ensure_verse_index(linked_db)["status"] == "rebuilt"
+
+
+def test_ensure_verse_index_without_db_is_safe(tmp_path):
+    assert documents.ensure_verse_index(tmp_path / "없음.db") == {"status": "no_db"}
+
+
+def test_ensure_verse_index_survives_unwritable_db(tmp_path, monkeypatch):
+    """설치된 번들처럼 쓸 수 없으면 조용히 건너뛰고 검색은 그대로 동작한다.
+
+    권한 대신 쓰기 실패를 직접 주입한다 — root로 도는 CI나 권한 모델이 다른
+    OS에서도 같은 경로를 검증하기 위해.
+    """
+    db_path = _legacy_db(tmp_path / "unwritable.db")
+
+    def _readonly(*args, **kwargs):
+        raise sqlite3.OperationalError("attempt to write a readonly database")
+
+    monkeypatch.setattr(documents, "rebuild_verse_index", _readonly)
+
+    result = documents.ensure_verse_index(db_path)
+
+    assert result["status"] == "unwritable"
+    # 인덱스가 없어도 BM25 검색은 살아 있다
+    assert [r["id"] for r in documents.search(db_path, "하나님 사랑")] == ["v1"]
+
+
+@pytest.mark.skipif(
+    hasattr(os, "geteuid") and os.geteuid() == 0,
+    reason="root는 파일 권한을 무시한다",
+)
+@pytest.mark.skipif(sys.platform == "win32",
+                    reason="POSIX 권한 비트가 없다")
+def test_ensure_verse_index_survives_readonly_file(tmp_path):
+    """실제 읽기 전용 파일에서도 기동을 막지 않는다."""
+    db_path = _legacy_db(tmp_path / "readonly.db")
+    db_path.chmod(0o444)
+    try:
+        assert documents.ensure_verse_index(db_path)["status"] == "unwritable"
+    finally:
+        db_path.chmod(0o644)
+
+
+def test_default_db_path_sits_next_to_core():
+    path = documents.default_db_path()
+    assert path.name == "bible_documents.db"
+    assert path.parent == Path(documents.__file__).resolve().parent.parent
 
 
 # --- 피드백 가중 -------------------------------------------------------------

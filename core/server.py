@@ -935,7 +935,7 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
                 rec["document_edits"] = store.list_document_revisions(limit=3)
                 # Search Bible knowledge base — 인사말 수준의 짧은 입력에는
                 # 주입하지 않는다 (무관한 구절이 맥락을 오염시키는 것 방지)
-                bible_db = Path(__file__).parent.parent / "bible_documents.db"
+                bible_db = documents.default_db_path()
                 if bible_db.exists() and len(cleaned) >= 8:
                     try:
                         # 과거 주입 구절이 받은 평가를 순위에 반영한다. 관주
