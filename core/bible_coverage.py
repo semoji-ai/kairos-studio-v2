@@ -57,6 +57,16 @@ def book_num(name: str) -> int | None:
     return None
 
 
+def book_tokens() -> list[str]:
+    """정규식 대안(alternation)에 쓸 성경 책 표기 토큰 — 긴 것부터.
+
+    정식 이름과 약어를 함께 담고 길이 내림차순으로 정렬한다. 짧은 약어가 긴
+    이름의 접두사인 경우("요" vs "요한복음")가 많아, 정렬 순서가 곧 최장 일치
+    보장이 된다.
+    """
+    return sorted(set(BOOKS) | set(_ALIAS), key=len, reverse=True)
+
+
 def load_verse_counts(workspace_dir: Path) -> dict[int, dict[int, int]]:
     """{book_num: {chapter: 절 수}} — 개역개정 jsonl에서 1회 계산 후 캐시."""
     key = str(workspace_dir)

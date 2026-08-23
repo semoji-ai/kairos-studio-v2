@@ -413,6 +413,48 @@ def test_build_prompt_trims_oversized_block():
     assert n < 5  # 블록이 캡을 넘으면 스니펫이 줄어든다
 
 
+def test_build_prompt_reports_surviving_bible_refs():
+    """블록에 실제로 들어간 성경 자료만 학습 신호로 귀속돼야 한다."""
+    from core.server import build_prompt
+    refs = [{"reference": f"43:3:{i}", "content": "본문"} for i in range(5)]
+    rec = {"snippets": [], "avoid": [], "corrections": [], "bible_refs": refs}
+
+    prompt, _ = build_prompt("짧은 질문", rec)
+
+    used = rec["bible_refs_used"]
+    assert [r["reference"] for r in used] == ["43:3:0", "43:3:1", "43:3:2"]
+    for ref in used:
+        assert ref["reference"] in prompt
+
+
+def test_build_prompt_reports_no_refs_when_block_empty():
+    from core.server import build_prompt
+    rec = {"snippets": [], "avoid": [], "corrections": [], "bible_refs": []}
+
+    prompt, n = build_prompt("원문 그대로", rec)
+
+    assert (prompt, n) == ("원문 그대로", 0)
+    assert rec["bible_refs_used"] == []
+
+
+def test_build_prompt_drops_refs_that_budget_trimmed():
+    """캡 초과로 잘려나간 구절은 주입된 것으로 기록되지 않는다.
+
+    corrections는 트림 대상이 아니라, 그것만으로 캡을 넘기면 성경 자료는 끝까지
+    깎여 나간다. 이때 구절이 주입된 것으로 기록되면 학습 신호가 오염된다.
+    """
+    from core.server import build_prompt
+    refs = [{"reference": f"43:3:{i}", "content": "본문"} for i in range(3)]
+    rec = {"snippets": [], "avoid": [], "corrections": ["교" * 1600],
+           "bible_refs": refs}
+
+    prompt, _ = build_prompt("짧은 질문", rec)
+
+    assert rec["bible_refs_used"] == []
+    for ref in refs:
+        assert ref["reference"] not in prompt
+
+
 def test_chat_persists_and_serves_artifact(srv, monkeypatch, tmp_path):
     url, store = srv
     img = tmp_path / "shot.png"

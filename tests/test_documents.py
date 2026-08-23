@@ -132,5 +132,186 @@ def test_knowledge_base_population():
             pass
 
 
+# --- 장절 참조 정규화 -------------------------------------------------------
+
+
+def test_ref_key_handles_every_ingest_format():
+    """인제스트 경로마다 다른 표기가 하나의 canonical 키로 모여야 한다."""
+    assert documents.ref_key("43:3:16") == "43:3:16"        # bethel
+    assert documents.ref_key("요한복음 3:16") == "43:3:16"   # mybible
+    assert documents.ref_key("요 3:16") == "43:3:16"         # 약어
+    assert documents.ref_key("kwanju_43003016") == "43:3:16"  # 관주 앵커
+    assert documents.ref_key("창세기 1장 1절") == "1:1:1"
+
+
+def test_ref_key_rejects_non_references():
+    for junk in ["", "   ", "G4982", "구원", "map_detailed_20240115", "99:1:1"]:
+        assert documents.ref_key(junk) is None, junk
+
+
+def test_parse_refs_continues_book_and_expands_range():
+    refs = documents.parse_refs("창1:1; 2:4, 요1:1-3")
+    # "2:4"는 책 이름이 생략됐으므로 직전 책(창세기)을 잇는다
+    assert refs == ["1:1:1", "1:2:4", "43:1:1", "43:1:2", "43:1:3"]
+
+
+def test_parse_refs_ignores_bare_numbers_without_book():
+    """책 이름이 한 번도 없으면 숫자쌍을 장절로 오인하지 않는다."""
+    assert documents.parse_refs("비율은 3:1, 2:4 입니다") == []
+
+
+def test_parse_refs_caps_long_ranges():
+    assert len(documents.parse_refs("시119:1-176")) == documents.VERSE_RANGE_CAP
+
+
+# --- 관주 그래프 -------------------------------------------------------------
+
+
+def _insert(cursor, doc_id, doc_type, reference, content):
+    cursor.execute(
+        "INSERT INTO documents (id, source, type, reference, content, path)"
+        " VALUES (?, ?, ?, ?, ?, ?)",
+        (doc_id, "test", doc_type, reference, content, None),
+    )
+
+
+@pytest.fixture
+def linked_db(tmp_path):
+    """어휘가 겹치지 않지만 관주로 이어진 두 구절 + 관주 레코드."""
+    db_path = tmp_path / "linked.db"
+    conn = documents.create_db(db_path)
+    cursor = conn.cursor()
+    _insert(cursor, "v_eph", "bible_verse", "49:2:8",
+            "너희는 그 은혜에 의하여 믿음으로 말미암아 구원을 받았으니")
+    _insert(cursor, "v_rom", "bible_verse", "45:3:24",
+            "그리스도 예수 안에 있는 속량으로 말미암아 값 없이 의롭다 하심을 얻은 자 되었느니라")
+    _insert(cursor, "v_other", "bible_verse", "1:1:1",
+            "태초에 하나님이 천지를 창조하시니라")
+    _insert(cursor, "kw", "cross_reference", "kwanju_49002008", "롬3:24")
+    conn.commit()
+    conn.close()
+    return db_path
+
+
+def test_rebuild_verse_index_builds_links(linked_db):
+    stats = documents.rebuild_verse_index(linked_db)
+
+    assert stats["verse_links"] == 1
+    assert stats["unresolved_anchors"] == 0
+    # cross_reference 문서 자신은 장절 매핑에 들어가지 않는다
+    assert stats["verse_refs"] == 3
+
+    conn = sqlite3.connect(str(linked_db))
+    rows = conn.execute("SELECT from_ref, to_ref FROM verse_links").fetchall()
+    conn.close()
+    assert rows == [("49:2:8", "45:3:24")]
+
+
+def test_rebuild_verse_index_reports_unresolved_anchors(tmp_path):
+    db_path = tmp_path / "bad.db"
+    conn = documents.create_db(db_path)
+    _insert(conn.cursor(), "kw", "cross_reference", "정체불명앵커", "롬3:24")
+    conn.commit()
+    conn.close()
+
+    stats = documents.rebuild_verse_index(db_path)
+
+    assert stats["verse_links"] == 0
+    assert stats["unresolved_anchors"] == 1
+    assert stats["unresolved_anchor_samples"] == ["정체불명앵커"]
+
+
+def test_rebuild_verse_index_is_idempotent(linked_db):
+    first = documents.rebuild_verse_index(linked_db)
+    second = documents.rebuild_verse_index(linked_db)
+    assert first["verse_links"] == second["verse_links"]
+    assert first["verse_refs"] == second["verse_refs"]
+
+
+def test_search_surfaces_cross_referenced_verse(linked_db):
+    """어휘가 안 겹치는 구절이 관주 링크를 타고 올라온다 — 시맨틱의 핵심 이득."""
+    documents.rebuild_verse_index(linked_db)
+
+    lexical_only = documents.search(linked_db, "은혜 믿음 구원", limit=3,
+                                    expand_links=False)
+    assert "v_rom" not in {r["id"] for r in lexical_only}
+
+    expanded = documents.search(linked_db, "은혜 믿음 구원", limit=3)
+    ids = [r["id"] for r in expanded]
+    assert "v_eph" == ids[0]      # 어휘로 직접 매칭된 구절이 여전히 1위
+    assert "v_rom" in ids         # 관주로 이어진 구절이 새로 진입
+
+
+def test_search_without_links_keeps_bm25_order(linked_db):
+    """링크 테이블이 비어 있으면 기존 BM25 동작과 동일해야 한다 (하위호환)."""
+    before = documents.search(linked_db, "구원", limit=3)
+    documents.rebuild_verse_index(linked_db)
+    after = documents.search(linked_db, "구원", limit=3, expand_links=False)
+    assert [r["id"] for r in before] == [r["id"] for r in after]
+
+
+# --- 피드백 가중 -------------------------------------------------------------
+
+
+def test_feedback_multiplier_matches_recall_scale():
+    assert documents.feedback_multiplier(0, 0) == 1.0
+    assert documents.feedback_multiplier(1, 0) == 1.5   # recall.py의 up ×1.5
+    assert documents.feedback_multiplier(0, 1) == 0.5
+    # 상·하한으로 클램프되어 폭주하지 않는다
+    assert documents.feedback_multiplier(100, 0) == documents.FEEDBACK_MAX
+    assert documents.feedback_multiplier(0, 100) == documents.FEEDBACK_MIN
+
+
+def test_search_feedback_promotes_liked_verse(tmp_path):
+    db_path = tmp_path / "fb.db"
+    conn = documents.create_db(db_path)
+    cursor = conn.cursor()
+    # 같은 낱말을 담아 BM25 점수가 비슷하게 나오는 두 구절
+    _insert(cursor, "v_a", "bible_verse", "45:3:24", "값 없이 의롭다 하심을 얻은 자")
+    _insert(cursor, "v_b", "bible_verse", "49:2:8", "믿음으로 말미암아 구원을 받았으니")
+    conn.commit()
+    conn.close()
+
+    query = "믿음 구원 의롭다"
+    baseline = documents.search(db_path, query, limit=2)
+    assert len(baseline) == 2
+    loser = baseline[-1]
+
+    boosted = documents.search(
+        db_path, query, limit=2,
+        ref_feedback={loser["reference"]: {"up": 3, "down": 0}},
+    )
+    assert boosted[0]["id"] == loser["id"]
+
+
+def test_search_feedback_reaches_other_source_notation(tmp_path):
+    """'요한복음 3:16'으로 남긴 평가가 '43:3:16' 표기 문서에도 닿아야 한다."""
+    db_path = tmp_path / "notation.db"
+    conn = documents.create_db(db_path)
+    cursor = conn.cursor()
+    _insert(cursor, "v_num", "bible_verse", "43:3:16", "하나님이 세상을 이처럼 사랑하사")
+    _insert(cursor, "v_dec", "bible_verse", "43:3:17", "하나님이 그 아들을 세상에 보내신 것은")
+    conn.commit()
+    conn.close()
+
+    down_ranked = documents.search(
+        db_path, "하나님이 세상을", limit=2,
+        ref_feedback={"요한복음 3:16": {"up": 0, "down": 4}},
+    )
+    assert down_ranked[-1]["id"] == "v_num"
+
+
+def test_search_feedback_does_not_mutate_caller_dict(tmp_path):
+    db_path = tmp_path / "nomutate.db"
+    conn = documents.create_db(db_path)
+    _insert(conn.cursor(), "v", "bible_verse", "43:3:16", "하나님이 세상을 사랑하사")
+    conn.commit()
+    conn.close()
+
+    feedback = {"요한복음 3:16": {"up": 1, "down": 0}}
+    documents.search(db_path, "하나님", limit=1, ref_feedback=feedback)
+    assert feedback == {"요한복음 3:16": {"up": 1, "down": 0}}
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
