@@ -1,7 +1,16 @@
-"""기존 bible_documents.db에서 관주 링크·장절 매핑을 재구축한다.
+"""bible_documents.db에 관주 링크·장절 매핑을 구워 넣는다. **빌드 타임 도구.**
 
-재인제스트 없이 verse_links / verse_refs 만 다시 만든다 (94k 문서 재색인은
-수십 분 걸리지만 이 스크립트는 관주 레코드만 훑는다).
+bible_documents.db는 tauri.release.conf.json이 `"../bible_documents.db"`로
+앱 번들에 굽는 **공통 읽기 전용 자산**이다 — 모든 목사님이 동일한 사본을 받고,
+설치된 번들(.app / Program Files)은 쓸 수 없다. 그러니 이 스크립트는 릴리스를
+만드는 개발 머신에서 돌린다. build-resources.sh / .ps1이 자동으로 호출하므로
+보통은 직접 부를 일이 없고, 기존 DB에 인덱스만 새로 얹을 때 수동으로 쓴다.
+
+목사님별 학습 데이터(대화·피드백·injected_refs)는 여기가 아니라
+data_dir/kairos.db(기본 ~/.kairos-studio)에 있다. 이 DB에는 들어가지 않는다.
+
+재인제스트는 하지 않는다 — verse_links / verse_refs만 다시 만든다
+(94k 문서 재색인은 수십 분이지만 이건 관주 레코드만 훑어 수 초).
 
     python3 scripts/build_verse_links.py
     KAIROS_BIBLE_DB=/path/to/bible_documents.db python3 scripts/build_verse_links.py
@@ -9,8 +18,8 @@
 DB 경로는 KAIROS_BIBLE_DB 환경변수 > 리포지토리 루트의 bible_documents.db 순.
 
 해석 실패한 관주 앵커 표기를 함께 출력한다. 관주 원본의 앵커 필드(jj) 표기가
-예상과 다르면 unresolved_anchors 가 크게 잡히므로, 그 샘플을 보고
-core/documents.py 의 ref_key() 를 한 번 손보면 된다.
+예상과 다르면 unresolved_anchors가 크게 잡히므로, 그 샘플을 보고
+core/documents.py의 ref_key()를 한 번 손보면 된다.
 """
 import os
 import sys

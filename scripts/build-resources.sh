@@ -87,4 +87,15 @@ python3 -m pip install --disable-pip-version-check \
   --target "$RESOURCES_DIR/python-packages" \
   -r "$ROOT_DIR/requirements-presentation.txt"
 
+# bible_documents.db 는 tauri.release.conf.json 이 "../bible_documents.db" 로
+# 번들에 굽는 공통 읽기 전용 자산이다. 설치된 번들은 쓸 수 없으므로 관주
+# 인덱스는 반드시 여기, 빌드 타임에 만들어 두어야 한다.
+echo "==> Building verse cross-reference index into bible_documents.db"
+if [ -f "$ROOT_DIR/bible_documents.db" ]; then
+  python3 "$ROOT_DIR/scripts/build_verse_links.py"
+else
+  echo "WARN: bible_documents.db not found at $ROOT_DIR — skipping verse index" >&2
+  echo "      (the tauri release build will fail on the missing bundle resource)" >&2
+fi
+
 echo "==> Done. Resources staged at $RESOURCES_DIR"

@@ -129,4 +129,17 @@ Copy-Item -Recurse -Force (Join-Path $PromptKitRepo "skills") $PromptKitDest
 Copy-Item -Force (Join-Path $PromptKitRepo "LICENSE") $PromptKitDest
 Copy-Item -Force (Join-Path $RootDir "presentation-engines.lock.json") $ResourcesDir
 
+# bible_documents.db 는 tauri.release.conf.json 이 "../bible_documents.db" 로
+# 번들에 굽는 공통 읽기 전용 자산이다. 설치된 번들은 쓸 수 없으므로 관주
+# 인덱스는 반드시 여기, 빌드 타임에 만들어 두어야 한다.
+Write-Host "==> Building verse cross-reference index into bible_documents.db"
+$BibleDb = Join-Path $RootDir "bible_documents.db"
+if (Test-Path $BibleDb) {
+    py -3 (Join-Path $RootDir "scripts\build_verse_links.py")
+    if ($LASTEXITCODE -ne 0) { throw "verse index build failed" }
+} else {
+    Write-Warning "bible_documents.db not found at $RootDir - skipping verse index"
+    Write-Warning "(the tauri release build will fail on the missing bundle resource)"
+}
+
 Write-Host "==> Done. Resources staged at $ResourcesDir"

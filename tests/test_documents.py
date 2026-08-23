@@ -250,6 +250,68 @@ def test_search_without_links_keeps_bm25_order(linked_db):
     assert [r["id"] for r in before] == [r["id"] for r in after]
 
 
+def _legacy_db(path):
+    """이 변경 이전에 구워진 bible_documents.db 재현 — 관주 인덱스가 없다.
+
+    번들 DB는 빌드 타임 자산이라 코드보다 오래된 판이 배포돼 있을 수 있다.
+    """
+    conn = sqlite3.connect(str(path))
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE documents (
+            id TEXT PRIMARY KEY, source TEXT NOT NULL, type TEXT NOT NULL,
+            reference TEXT, content TEXT NOT NULL, path TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP)
+    """)
+    cur.execute("""
+        CREATE VIRTUAL TABLE documents_fts USING fts5(
+            reference, content, content=documents, content_rowid=rowid)
+    """)
+    cur.execute(
+        "INSERT INTO documents (id, source, type, reference, content)"
+        " VALUES ('v1','bethel','bible_verse','43:3:16','하나님이 세상을 이처럼 사랑하사')"
+    )
+    cur.execute(
+        "INSERT INTO documents_fts (rowid, reference, content)"
+        " SELECT rowid, reference, content FROM documents"
+    )
+    conn.commit()
+    conn.close()
+    return path
+
+
+def test_search_falls_back_when_verse_index_missing(tmp_path):
+    """관주 테이블이 없는 구버전 DB에서도 BM25 결과는 살아야 한다.
+
+    번들 DB와 코드는 따로 갱신되므로, 확장 실패로 검색이 통째로 빈손이 되면
+    구버전 DB가 깔린 설치본의 성경 검색이 전부 죽는다.
+    """
+    db_path = _legacy_db(tmp_path / "legacy.db")
+
+    results = documents.search(db_path, "하나님 사랑", limit=3)
+
+    assert [r["id"] for r in results] == ["v1"]
+
+
+def test_search_falls_back_with_feedback_on_legacy_db(tmp_path):
+    db_path = _legacy_db(tmp_path / "legacy_fb.db")
+
+    results = documents.search(db_path, "하나님 사랑", limit=3,
+                               ref_feedback={"43:3:16": {"up": 1, "down": 0}})
+
+    assert [r["id"] for r in results] == ["v1"]
+
+
+def test_has_verse_index_detects_both_tables(tmp_path):
+    legacy = sqlite3.connect(str(_legacy_db(tmp_path / "detect.db")))
+    assert documents._has_verse_index(legacy.cursor()) is False
+    legacy.close()
+
+    fresh = documents.create_db(tmp_path / "fresh.db")
+    assert documents._has_verse_index(fresh.cursor()) is True
+    fresh.close()
+
+
 # --- 피드백 가중 -------------------------------------------------------------
 
 

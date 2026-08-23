@@ -663,6 +663,20 @@ def feedback_multiplier(ups: int, downs: int) -> float:
     return max(FEEDBACK_MIN, min(FEEDBACK_MAX, mult))
 
 
+def _has_verse_index(cursor) -> bool:
+    """관주 인덱스 테이블이 이 DB에 있는가.
+
+    bible_documents.db는 빌드 타임에 구워져 앱 번들로 배포되는 읽기 전용
+    공통 자산이라, 코드보다 오래된 판이 깔려 있을 수 있다. 그럴 때 링크 확장은
+    조용히 건너뛰고 BM25 결과는 그대로 살려야 한다.
+    """
+    rows = cursor.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+        " AND name IN ('verse_links','verse_refs')"
+    ).fetchall()
+    return len(rows) == 2
+
+
 def _link_expansion(cursor, seed_ids: list[str],
                     seed_scores: dict[str, float]) -> dict[str, float]:
     """상위 BM25 문서에서 관주 링크를 1홉 따라가 {doc_id: 가점}을 만든다."""
@@ -742,20 +756,25 @@ def search(db_path: Path, query: str, limit: int = 5,
             scores[doc_id] = max(0.0, -row["rank"]) / best
             order.append(doc_id)
 
-        if expand_links:
-            bonus = _link_expansion(cursor, order, scores)
-            missing = [doc_id for doc_id in bonus if doc_id not in records]
-            for chunk_start in range(0, len(missing), 500):
-                chunk = missing[chunk_start:chunk_start + 500]
-                placeholders = ",".join("?" * len(chunk))
-                for row in cursor.execute(
-                    f"SELECT id, source, type, reference, content, path"
-                    f" FROM documents WHERE id IN ({placeholders})", chunk
-                ).fetchall():
-                    records[row["id"]] = dict(row)
-            for doc_id, gain in bonus.items():
-                if doc_id in records:
-                    scores[doc_id] = scores.get(doc_id, 0.0) + gain
+        if expand_links and _has_verse_index(cursor):
+            # 확장은 부가 기능이다. 여기서 뭐가 터지든 BM25 결과는 살려서
+            # 돌려준다 — 검색이 통째로 빈손이 되는 것보다 낫다.
+            try:
+                bonus = _link_expansion(cursor, order, scores)
+                missing = [doc_id for doc_id in bonus if doc_id not in records]
+                for chunk_start in range(0, len(missing), 500):
+                    chunk = missing[chunk_start:chunk_start + 500]
+                    placeholders = ",".join("?" * len(chunk))
+                    for row in cursor.execute(
+                        f"SELECT id, source, type, reference, content, path"
+                        f" FROM documents WHERE id IN ({placeholders})", chunk
+                    ).fetchall():
+                        records[row["id"]] = dict(row)
+                for doc_id, gain in bonus.items():
+                    if doc_id in records:
+                        scores[doc_id] = scores.get(doc_id, 0.0) + gain
+            except sqlite3.Error as exc:
+                log.warning(f"link expansion skipped: {exc}")
 
         if ref_feedback:
             weights = _canonical_feedback(ref_feedback)
