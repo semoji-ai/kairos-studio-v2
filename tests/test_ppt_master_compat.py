@@ -2,17 +2,25 @@ import importlib
 import sys
 from pathlib import Path
 
+import pytest
 
+SCRIPTS = (
+    Path(__file__).parents[1]
+    / "src-tauri"
+    / "resources"
+    / "ppt-master"
+    / "skills"
+    / "ppt-master"
+    / "scripts"
+)
+
+
+# ppt-master는 scripts/build-resources.* 가 릴리스 빌드 때만 스테이징한다
+# (gitignore). 스테이징 전 체크아웃에서는 검사할 대상이 없으므로 건너뛴다.
+@pytest.mark.skipif(not (SCRIPTS / "svg_to_pptx").is_dir(),
+                    reason="ppt-master 미스테이징 — scripts/build-resources.* 실행 후 검사")
 def test_staged_ppt_master_measures_and_routes_hangul_correctly():
-    scripts = (
-        Path(__file__).parents[1]
-        / "src-tauri"
-        / "resources"
-        / "ppt-master"
-        / "skills"
-        / "ppt-master"
-        / "scripts"
-    )
+    scripts = SCRIPTS
     sys.path.insert(0, str(scripts))
     try:
         utils = importlib.import_module("svg_to_pptx.drawingml.utils")
