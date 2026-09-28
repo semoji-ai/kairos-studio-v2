@@ -819,3 +819,43 @@ def test_presentation_upload_status_and_download(srv, monkeypatch):
     ))
     assert response["ok"] is True
     assert opened[-1][1] is True
+
+
+def test_setup_workspace_update_status_and_apply(srv, tmp_path, monkeypatch):
+    url, _ = srv
+    import zipfile
+    from core import settings
+    monkeypatch.setenv("KAIROS_CONFIG_DIR", str(tmp_path / "cfg"))
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    with zipfile.ZipFile(bundle / "publish_agent.zip", "w") as zf:
+        zf.writestr("CLAUDE.md", "new")
+    monkeypatch.setenv("KAIROS_BUNDLE_DIR", str(bundle))
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "CLAUDE.md").write_text("old", encoding="utf-8")
+    settings.save({"workspace_dir": str(ws)})
+
+    st = json.load(_req(url, "/setup/workspace-update"))
+    assert st["available"] is True and st["changed"] == ["CLAUDE.md"]
+
+    res = json.load(_req(url, "/setup/update-workspace", {}))
+    assert res["updated"] == ["CLAUDE.md"]
+    assert res["backup_dir"].startswith(".kairos-backup/")
+    assert (ws / "CLAUDE.md").read_text(encoding="utf-8") == "new"
+    assert json.load(_req(url, "/setup/workspace-update"))["available"] is False
+
+
+def test_setup_update_workspace_requires_token_and_workspace(srv, tmp_path, monkeypatch):
+    url, _ = srv
+    from core import settings
+    monkeypatch.setenv("KAIROS_CONFIG_DIR", str(tmp_path / "cfg"))
+    with pytest.raises(urllib.error.HTTPError) as unauth:
+        _req(url, "/setup/update-workspace", {}, token=None)
+    assert unauth.value.code == 401
+    settings.save({"workspace_dir": None})
+    st = json.load(_req(url, "/setup/workspace-update"))
+    assert st["available"] is False and st["reason"] == "no_workspace"
+    with pytest.raises(urllib.error.HTTPError) as no_ws:
+        _req(url, "/setup/update-workspace", {})
+    assert no_ws.value.code == 400
