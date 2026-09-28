@@ -365,7 +365,8 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
             # (토큰이 index.html 주입으로 전달되므로 정적은 인증 불가/불요).
             api_path = (
                 u.path in ("/sessions", "/messages", "/settings", "/storage", "/cli/status",
-                           "/workspace/info", "/rules", "/setup/status", "/bible/coverage",
+                           "/workspace/info", "/rules", "/setup/status",
+                           "/setup/workspace-update", "/bible/coverage",
                            "/presentations", "/presentations/engines", "/reviews")
                 or u.path.startswith("/presentations/")
             )
@@ -424,6 +425,8 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
                     return self._workspace_info()
                 if u.path == "/setup/status":
                     return self._setup_status()
+                if u.path == "/setup/workspace-update":
+                    return self._setup_workspace_update_status()
             # 아티팩트 서빙: 정적 서빙과 동일 근거로 Host 검증만(Bearer 불요 —
             # <img src="/artifacts/...">는 Authorization 헤더를 실을 수 없다).
             # 경로는 data_dir/artifacts 루트에 감금(resolve+relative_to).
@@ -691,6 +694,26 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
             return self._send(200, {"workspace_dir": result["workspace_dir"],
                                      "skills": len(ws_info["skills"])})
 
+        def _setup_workspace_update_status(self):
+            bundle_dir = Path(os.environ.get("KAIROS_BUNDLE_DIR", "."))
+            ws_str = settings.load()["workspace_dir"]
+            if not ws_str:
+                return self._send(200, {"available": False, "changed": [], "added": [],
+                                         "reason": "no_workspace"})
+            return self._send(200, setup.workspace_update_status(
+                bundle_dir, Path(ws_str).expanduser()))
+
+        def _setup_update_workspace(self):
+            bundle_dir = Path(os.environ.get("KAIROS_BUNDLE_DIR", "."))
+            ws_str = settings.load()["workspace_dir"]
+            if not ws_str:
+                return self._send(400, {"error": "작업 폴더가 설정되지 않았습니다"})
+            try:
+                result = setup.update_workspace(bundle_dir, Path(ws_str).expanduser())
+            except (FileNotFoundError, ValueError) as exc:
+                return self._send(400, {"error": str(exc)})
+            return self._send(200, result)
+
         def _storage(self):
             db_path = getattr(state["store"], "_path", None)
             if db_path is None:
@@ -795,6 +818,8 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
                 return self._setup_open_login()
             if self.path == "/setup/install-workspace":
                 return self._setup_install_workspace()
+            if self.path == "/setup/update-workspace":
+                return self._setup_update_workspace()
             return self._send(404, {"error": "not found"})
 
         def _set_rule_active(self, body: dict):

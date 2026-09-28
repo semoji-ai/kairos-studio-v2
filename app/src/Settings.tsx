@@ -1,6 +1,11 @@
 import { useEffect, useState } from "react";
-import { cliStatus, getRules, getSettings, putSettings, runDistill, setRuleActive, storageInfo, workspaceInfo } from "./api";
-import type { CliStatus, Rule, Settings as SettingsType, StorageInfo, WorkspaceInfo } from "./api";
+import {
+  cliStatus, getRules, getSettings, putSettings, runDistill, setRuleActive, storageInfo,
+  updateWorkspace, workspaceInfo, workspaceUpdateStatus,
+} from "./api";
+import type {
+  CliStatus, Rule, Settings as SettingsType, StorageInfo, WorkspaceInfo, WorkspaceUpdateStatus,
+} from "./api";
 
 function badge(installed: boolean, authed: boolean | null): string {
   if (!installed) return "❌";
@@ -23,6 +28,30 @@ export default function Settings({ onClose }: { onClose: () => void }) {
   const [distilling, setDistilling] = useState(false);
   const [distillResult, setDistillResult] = useState<string | null>(null);
   const [distillError, setDistillError] = useState<string | null>(null);
+  const [skillUpdate, setSkillUpdate] = useState<WorkspaceUpdateStatus | null>(null);
+  const [updating, setUpdating] = useState(false);
+  const [updateResult, setUpdateResult] = useState<string | null>(null);
+  const [updateError, setUpdateError] = useState<string | null>(null);
+
+  function refreshSkillUpdate() {
+    workspaceUpdateStatus().then(setSkillUpdate).catch(() => setSkillUpdate(null));
+  }
+
+  async function doUpdateSkills() {
+    setUpdating(true); setUpdateResult(null); setUpdateError(null);
+    try {
+      const res = await updateWorkspace();
+      setUpdateResult(res.backup_dir
+        ? `갱신 완료 · 파일 ${res.updated.length}개 · 이전 파일은 ${res.backup_dir} 에 보관`
+        : `갱신 완료 · 파일 ${res.updated.length}개`);
+      setWorkspace(await workspaceInfo());
+    } catch (e) {
+      setUpdateError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setUpdating(false);
+      refreshSkillUpdate();
+    }
+  }
 
   function refreshRules() {
     getRules().then(r => { setRules(r.rules); setUndistilled(r.undistilled); });
@@ -39,6 +68,7 @@ export default function Settings({ onClose }: { onClose: () => void }) {
     storageInfo().then(setStorage);
     workspaceInfo().then(setWorkspace);
     refreshRules();
+    refreshSkillUpdate();
   }, []);
 
   async function doDistill() {
@@ -80,6 +110,7 @@ export default function Settings({ onClose }: { onClose: () => void }) {
       setOutputDirInput(updated.output_dir ?? "");
       const w = await workspaceInfo();
       setWorkspace(w);
+      refreshSkillUpdate();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -166,6 +197,21 @@ export default function Settings({ onClose }: { onClose: () => void }) {
               스킬이 파일을 쓰려면 권한을 acceptEdits / workspace-write로 올리는 것을 권장합니다
             </div>
           )}
+          {skillUpdate?.available && (
+            <div className="notice warn field-row">
+              <span style={{ flex: 1 }}>
+                설교 도우미 스킬 새 버전 — 파일 {skillUpdate.changed.length + skillUpdate.added.length}개 변경
+              </span>
+              <button className="btn-primary" disabled={updating} onClick={doUpdateSkills}>
+                {updating ? "갱신 중..." : "스킬 갱신"}
+              </button>
+            </div>
+          )}
+          {skillUpdate?.reason === "git" && (
+            <div className="hint">작업 폴더가 git으로 관리되고 있어 스킬은 git pull로 갱신합니다.</div>
+          )}
+          {updateResult && <div className="notice ok">{updateResult}</div>}
+          {updateError && <div className="notice error">{updateError}</div>}
         </div>
 
         <div className="field" style={{ marginTop: 20 }}>

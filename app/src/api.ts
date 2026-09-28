@@ -130,6 +130,24 @@ export async function installWorkspace(): Promise<{ workspace_dir: string; skill
   return r.json();
 }
 
+export type WorkspaceUpdateStatus = {
+  available: boolean;
+  changed: string[];
+  added: string[];
+  reason: "no_bundle" | "no_workspace" | "git" | null;
+};
+
+export async function workspaceUpdateStatus(): Promise<WorkspaceUpdateStatus> {
+  const r = await fetch("/setup/workspace-update", { headers: HDRS });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+export async function updateWorkspace(): Promise<{ updated: string[]; backup_dir: string | null }> {
+  const r = await fetch("/setup/update-workspace", { method: "POST", headers: HDRS });
+  if (!r.ok) throw new Error((await r.json()).error ?? `HTTP ${r.status}`);
+  return r.json();
+}
+
 export type Rule = { id: number; rule: string; active: boolean; created_at: string };
 
 export async function getRules(): Promise<{ rules: Rule[]; undistilled: number }> {
