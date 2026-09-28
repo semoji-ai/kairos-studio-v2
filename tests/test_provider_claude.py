@@ -54,12 +54,13 @@ def test_permission_mode_default_without_cfg(monkeypatch):
     assert argv[argv.index("--permission-mode") + 1] == "default"
 
 
-def test_model_is_opus_4_8(monkeypatch):
+def test_model_is_opus_5_5_at_high_effort(monkeypatch):
     monkeypatch.setenv("KAIROS_CLAUDE_CMD", f"{sys.executable} {FAKE_ARGV}")
     from core.providers import claude
     done = list(claude.chat("hi"))[-1]
     argv = _json.loads(done["text"])
-    assert argv[argv.index("--model") + 1] == "claude-opus-4-8"
+    assert argv[argv.index("--model") + 1] == "claude-opus-5-5"
+    assert argv[argv.index("--effort") + 1] == "high"
 
 
 def test_windows_subprocess_has_no_console_window(monkeypatch):
