@@ -92,32 +92,34 @@ export default function Settings({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <main style={{ flex: 1, display: "flex", flexDirection: "column", overflowY: "auto", padding: 16, fontFamily: "sans-serif" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <h2>설정</h2>
-        <button onClick={onClose}>닫기</button>
-      </div>
-
-      {error && (
-        <div style={{ background: "#fee2e2", color: "#991b1b", padding: 8, borderRadius: 4, margin: "8px 0" }}>
-          {error}
+    <main className="page">
+      <div className="page-inner">
+      <header className="page-header">
+        <div>
+          <span className="page-eyebrow">SETTINGS</span>
+          <h1>설정</h1>
         </div>
-      )}
+        <button onClick={onClose}>닫기</button>
+      </header>
 
-      <section style={{ margin: "16px 0" }}>
+      {error && <div className="notice error" style={{ marginBottom: 16 }}>{error}</div>}
+
+      <section className="card">
         <h3>CLI 상태</h3>
-        {cli == null ? <p>불러오는 중...</p> : (
-          <div style={{ display: "flex", gap: 12 }}>
+        {cli == null ? <p className="hint">불러오는 중...</p> : (
+          <div className="cli-grid">
             {Object.entries(cli).map(([name, st]) => (
-              <div key={name} style={{ border: "1px solid #ddd", borderRadius: 8, padding: 12, minWidth: 200 }}>
-                <div style={{ fontWeight: "bold" }}>{name}</div>
-                <div>설치: {st.installed ? "✅" : "❌"}</div>
-                <div>버전: {st.version ?? "-"}</div>
-                <div>로그인: {badge(st.installed, st.authed)}</div>
+              <div key={name} className="cli-card">
+                <strong>{name}</strong>
+                <dl className="kv">
+                  <dt>설치</dt><dd>{st.installed ? "✅" : "❌"}</dd>
+                  <dt>버전</dt><dd>{st.version ?? "-"}</dd>
+                  <dt>로그인</dt><dd>{badge(st.installed, st.authed)}</dd>
+                </dl>
                 {st.authed === false && st.login_hint && (
-                  <div style={{ marginTop: 4, fontSize: 12 }}>
+                  <div className="field-row" style={{ marginTop: 8, fontSize: 12 }}>
                     <code>{st.login_hint}</code>
-                    <button style={{ marginLeft: 4 }} onClick={() => copy(st.login_hint)}>복사</button>
+                    <button onClick={() => copy(st.login_hint)}>복사</button>
                   </div>
                 )}
               </div>
@@ -126,126 +128,132 @@ export default function Settings({ onClose }: { onClose: () => void }) {
         )}
       </section>
 
-      <section style={{ margin: "16px 0" }}>
+      <section className="card">
         <h3>저장소</h3>
         {storage?.fallback && (
-          <div style={{ background: "#fef3c7", color: "#92400e", padding: 8, borderRadius: 4, marginBottom: 8 }}>
+          <div className="notice warn" style={{ marginBottom: 12 }}>
             경로를 열 수 없어 로컬 기본 경로로 폴백했습니다.
           </div>
         )}
-        <div>현재 경로: {storage?.data_dir ?? "-"}</div>
-        <div>DB 용량: {storage ? (storage.db_bytes / 1048576).toFixed(1) : "-"} MB</div>
-        <div style={{ marginTop: 8 }}>
-          <input value={dataDirInput} onChange={e => setDataDirInput(e.target.value)}
-                 style={{ width: 300 }} />
-          <button style={{ marginLeft: 8 }} disabled={saving}
-                  onClick={() => save({ data_dir: dataDirInput })}>저장</button>
+        <dl className="kv">
+          <dt>현재 경로</dt><dd>{storage?.data_dir ?? "-"}</dd>
+          <dt>DB 용량</dt><dd>{storage ? (storage.db_bytes / 1048576).toFixed(1) : "-"} MB</dd>
+        </dl>
+        <div className="field">
+          <div className="field-row">
+            <input value={dataDirInput} onChange={e => setDataDirInput(e.target.value)} />
+            <button disabled={saving}
+                    onClick={() => save({ data_dir: dataDirInput })}>저장</button>
+          </div>
         </div>
 
-        <div style={{ marginTop: 16 }}>작업 폴더</div>
-        <div style={{ marginTop: 8 }}>
-          <input value={workspaceDirInput} onChange={e => setWorkspaceDirInput(e.target.value)}
-                 placeholder="(미설정)" style={{ width: 300 }} />
-          <button style={{ marginLeft: 8 }} disabled={saving}
-                  onClick={() => save({ workspace_dir: workspaceDirInput.trim() === "" ? null : workspaceDirInput })}>저장</button>
+        <div className="field" style={{ marginTop: 20 }}>
+          <span className="field-label">작업 폴더</span>
+          <div className="field-row">
+            <input value={workspaceDirInput} onChange={e => setWorkspaceDirInput(e.target.value)}
+                   placeholder="(미설정)" />
+            <button disabled={saving}
+                    onClick={() => save({ workspace_dir: workspaceDirInput.trim() === "" ? null : workspaceDirInput })}>저장</button>
+          </div>
+          {workspace && workspace.skills.length > 0 && (
+            <div className="hint">
+              스킬 {workspace.skills.length}개 감지: {workspace.skills.slice(0, 8).join(", ")}
+              {workspace.skills.length > 8 ? "…" : ""}
+            </div>
+          )}
+          {workspace?.workspace_dir && settings?.claude_permission_mode === "default" && (
+            <div className="notice warn">
+              스킬이 파일을 쓰려면 권한을 acceptEdits / workspace-write로 올리는 것을 권장합니다
+            </div>
+          )}
         </div>
-        {workspace && workspace.skills.length > 0 && (
-          <div style={{ marginTop: 8, fontSize: 12 }}>
-            스킬 {workspace.skills.length}개 감지: {workspace.skills.slice(0, 8).join(", ")}
-            {workspace.skills.length > 8 ? "…" : ""}
-          </div>
-        )}
-        {workspace?.workspace_dir && settings?.claude_permission_mode === "default" && (
-          <div style={{ background: "#fef3c7", color: "#92400e", padding: 8, borderRadius: 4, marginTop: 8, fontSize: 12 }}>
-            스킬이 파일을 쓰려면 권한을 acceptEdits / workspace-write로 올리는 것을 권장합니다
-          </div>
-        )}
 
-        <div style={{ marginTop: 16 }}>산출물 폴더</div>
-        <div style={{ fontSize: 12, color: "#666", marginTop: 4 }}>
-          작업 폴더의 지침·도구는 유지하고, 완성된 문서와 이미지만 세션별로 모읍니다.
-        </div>
-        <div style={{ marginTop: 8 }}>
-          <input value={outputDirInput} onChange={e => setOutputDirInput(e.target.value)}
-                 placeholder="(미설정)" style={{ width: 300 }} />
-          <button style={{ marginLeft: 8 }} disabled={saving}
-                  onClick={() => save({ output_dir: outputDirInput.trim() === "" ? null : outputDirInput })}>
-            저장
-          </button>
+        <div className="field" style={{ marginTop: 20 }}>
+          <span className="field-label">산출물 폴더</span>
+          <div className="hint">
+            작업 폴더의 지침·도구는 유지하고, 완성된 문서와 이미지만 세션별로 모읍니다.
+          </div>
+          <div className="field-row">
+            <input value={outputDirInput} onChange={e => setOutputDirInput(e.target.value)}
+                   placeholder="(미설정)" />
+            <button disabled={saving}
+                    onClick={() => save({ output_dir: outputDirInput.trim() === "" ? null : outputDirInput })}>
+              저장
+            </button>
+          </div>
         </div>
       </section>
 
-      <section style={{ margin: "16px 0" }}>
+      <section className="card">
         <h3>라우팅·권한</h3>
         {settings && (
-          <>
-            <div>
-              기본 provider:
-              <label style={{ marginLeft: 8 }}>
-                <input type="radio" name="default_provider" checked={settings.default_provider === "claude"}
-                       onChange={() => save({ default_provider: "claude" })} /> claude
-              </label>
-              <label style={{ marginLeft: 8 }}>
-                <input type="radio" name="default_provider" checked={settings.default_provider === "codex"}
-                       onChange={() => save({ default_provider: "codex" })} /> codex
-              </label>
+          <div className="stack">
+            <div className="field-row">
+              <span className="field-label" style={{ minWidth: 150 }}>기본 provider</span>
+              <div className="check-group">
+                <label className="check">
+                  <input type="radio" name="default_provider" checked={settings.default_provider === "claude"}
+                         onChange={() => save({ default_provider: "claude" })} /> claude
+                </label>
+                <label className="check">
+                  <input type="radio" name="default_provider" checked={settings.default_provider === "codex"}
+                         onChange={() => save({ default_provider: "codex" })} /> codex
+                </label>
+              </div>
             </div>
-            <div style={{ marginTop: 8 }}>
-              <label>
-                <input type="checkbox" checked={settings.routing_rules_enabled}
-                       onChange={e => save({ routing_rules_enabled: e.target.checked })} />
-                {" "}라우팅 규칙 사용
-              </label>
-            </div>
-            <div style={{ marginTop: 8 }}>
-              <label>
-                <input type="checkbox" checked={settings.learning_recall_enabled}
-                       onChange={e => save({ learning_recall_enabled: e.target.checked })} />
-                {" "}학습 회상 (과거 대화 자동 참조)
-              </label>
-            </div>
-            <div style={{ marginTop: 8 }}>
-              codex sandbox:
-              <select style={{ marginLeft: 8 }} value={settings.codex_sandbox}
+            <label className="check">
+              <input type="checkbox" checked={settings.routing_rules_enabled}
+                     onChange={e => save({ routing_rules_enabled: e.target.checked })} />
+              라우팅 규칙 사용
+            </label>
+            <label className="check">
+              <input type="checkbox" checked={settings.learning_recall_enabled}
+                     onChange={e => save({ learning_recall_enabled: e.target.checked })} />
+              학습 회상 (과거 대화 자동 참조)
+            </label>
+            <div className="field-row">
+              <span className="field-label" style={{ minWidth: 150 }}>codex sandbox</span>
+              <select value={settings.codex_sandbox}
                       onChange={e => save({ codex_sandbox: e.target.value as SettingsType["codex_sandbox"] })}>
                 <option value="read-only">read-only</option>
                 <option value="workspace-write">workspace-write</option>
               </select>
             </div>
-            <div style={{ marginTop: 8 }}>
-              claude permission mode:
-              <select style={{ marginLeft: 8 }} value={settings.claude_permission_mode}
+            <div className="field-row">
+              <span className="field-label" style={{ minWidth: 150 }}>claude permission mode</span>
+              <select value={settings.claude_permission_mode}
                       onChange={e => save({ claude_permission_mode: e.target.value as SettingsType["claude_permission_mode"] })}>
                 <option value="default">default</option>
                 <option value="acceptEdits">acceptEdits</option>
               </select>
             </div>
-          </>
+          </div>
         )}
       </section>
 
-      <section style={{ margin: "16px 0" }}>
+      <section className="card">
         <h3>학습된 규칙</h3>
-        <div>미증류 피드백 {undistilled}건</div>
-        <div style={{ marginTop: 8 }}>
-          <button disabled={distilling} onClick={doDistill}>
+        <div className="field-row">
+          <span className="hint">미증류 피드백 {undistilled}건</span>
+          <button className="btn-primary" disabled={distilling} onClick={doDistill}>
             {distilling ? "증류 중..." : "지금 증류"}
           </button>
-          {distillResult && <span style={{ marginLeft: 8 }}>{distillResult}</span>}
-          {distillError && <span style={{ marginLeft: 8, color: "#991b1b" }}>{distillError}</span>}
+          {distillResult && <span className="status-ok">{distillResult}</span>}
+          {distillError && <span className="status-bad">{distillError}</span>}
         </div>
-        <ul style={{ marginTop: 8, paddingLeft: 16 }}>
+        <ul className="rule-list">
           {rules.map(r => (
-            <li key={r.id} style={{ listStyle: "none", marginBottom: 4 }}>
-              <label>
+            <li key={r.id}>
+              <label className="check">
                 <input type="checkbox" checked={!!r.active}
                        onChange={e => toggleRule(r.id, e.target.checked)} />
-                {" "}{r.rule}
+                {r.rule}
               </label>
             </li>
           ))}
         </ul>
       </section>
+      </div>
     </main>
   );
 }

@@ -15,6 +15,7 @@ import coverageIcon from "./assets/icons/coverage.png";
 import pptIcon from "./assets/icons/ppt.png";
 import reviewIcon from "./assets/icons/review.png";
 import settingsIcon from "./assets/icons/settings.png";
+import { BookIcon, MemoryIcon, PlusIcon, ThumbDownIcon, ThumbUpIcon, TrashIcon } from "./icons";
 
 type Bubble = Msg | { id: "pending"; role: "assistant"; text: string; log: string };
 type StatusEvent = Extract<ChatEvent, { type: "status" }>;
@@ -284,19 +285,19 @@ export default function Chat() {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100vh", fontFamily: "sans-serif" }}>
+    <div className="app-shell">
       {!online && (
-        <div style={{ background: "#c0392b", color: "#fff", padding: "6px 14px",
-                      fontSize: 13, textAlign: "center" }}>
+        <div className="offline-banner" role="alert">
           ⚠️ 백엔드(사이드카)와 연결이 끊겼습니다. 앱을 껐다 다시 실행해 주세요.
           응답·성경 커버리지 등 모든 기능이 이 상태에서는 동작하지 않습니다.
         </div>
       )}
-      <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
-      <aside style={{ width: 220, borderRight: "1px solid #ddd", overflowY: "auto" }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 4, margin: 8 }}>
-          <button style={{ padding: "8px 10px", fontWeight: 600, textAlign: "left" }}
-                  onClick={() => { setSessionId(null); setView("chat"); }}>＋ 새 대화</button>
+      <div className="app-body">
+      <aside className="sidebar">
+        <div className="sidebar-brand">KAIROS <small>Studio</small></div>
+        <button className="new-chat-btn"
+                onClick={() => { setSessionId(null); setView("chat"); }}><PlusIcon /> 새 대화</button>
+        <nav className="nav-list">
           {([
             { key: "bible", icon: coverageIcon, label: "설교 커버리지",
               on: () => setView(v => v === "bible" ? "chat" : "bible"), active: view === "bible" },
@@ -308,33 +309,25 @@ export default function Chat() {
               on: () => setView(v => v === "chat" ? "settings" : "chat"), active: view === "settings" },
           ] as const).map(b => (
             <button key={b.key} onClick={b.on}
-                    style={{ display: "flex", alignItems: "center", gap: 8,
-                             padding: "6px 10px", textAlign: "left", cursor: "pointer",
-                             border: "1px solid #e2e2e8", borderRadius: 6,
-                             background: b.active ? "#eef" : "#fafafa" }}>
-              <img src={b.icon} width={22} height={22} alt=""
-                   style={{ borderRadius: 5, flexShrink: 0 }} />
+                    className={`nav-item${b.active ? " is-active" : ""}`}>
+              <img src={b.icon} width={22} height={22} alt="" />
               <span>{b.label}</span>
             </button>
           ))}
-        </div>
+        </nav>
+        {sessions.length > 0 && <div className="sidebar-label">최근 대화</div>}
         {sessions.map(s => (
           <div key={s.id} onClick={() => { setSessionId(s.id); setView("chat"); }}
-               style={{ padding: 8, cursor: "pointer", display: "flex",
-                        alignItems: "center", gap: 4,
-                        background: s.id === sessionId ? "#eef" : undefined }}>
-            <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis",
-                           whiteSpace: "nowrap" }}>{s.title}</span>
-            <button title="대화 삭제"
+               className={`session-item${s.id === sessionId && view === "chat" ? " is-active" : ""}`}>
+            <span className="session-title">{s.title}</span>
+            <button title="대화 삭제" aria-label="대화 삭제" className="session-delete"
                     onClick={async (e) => {
                       e.stopPropagation();
                       if (!confirm(`"${s.title}" 대화를 삭제할까요?`)) return;
                       await deleteSession(s.id);
                       if (s.id === sessionId) { setSessionId(null); setMsgs([]); }
                       listSessions().then(setSessions);
-                    }}
-                    style={{ border: "none", background: "transparent",
-                             cursor: "pointer", opacity: 0.55 }}>🗑</button>
+                    }}><TrashIcon size={15} /></button>
           </div>
         ))}
       </aside>
@@ -347,7 +340,8 @@ export default function Chat() {
       ) : (
       <div className="chat-with-preview" ref={chatLayoutRef}>
       <main className="chat-main">
-        <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
+        <div className="chat-scroll">
+          <div className="chat-thread">
           {bubbles.map((b, i) => {
             const isPending = !("content" in b);
             const text = isPending ? b.text : textOf(b as Msg);
@@ -357,13 +351,8 @@ export default function Chat() {
               ? m.content.filter(p => p.type === "image" || p.type === "document")
               : [];
             return (
-              <div key={i} style={{ margin: "8px 0",
-                                    textAlign: b.role === "user" ? "right" : "left" }}>
-                <div className={b.role === "assistant" ? "md-bubble" : undefined}
-                     style={{ display: "inline-block", padding: "8px 12px", borderRadius: 8,
-                              whiteSpace: b.role === "user" ? "pre-wrap" : undefined,
-                              textAlign: "left", maxWidth: "80%",
-                              background: b.role === "user" ? "#dbeafe" : "#f3f4f6" }}>
+              <div key={i} className={`msg-row ${b.role}`}>
+                <div className={b.role === "assistant" ? "md-bubble bubble-assistant" : "bubble-user"}>
                   {b.role === "assistant"
                     ? <>{isPending && (
                           <ProgressStatus status={pendingStatus} elapsed={pendingElapsed} />
@@ -409,10 +398,10 @@ export default function Chat() {
                   )}
                 </div>
                 {!isPending && m.role === "assistant" && m.id > 0 && (
-                  <div style={{ fontSize: 12, color: "#888" }}>
-                    {m.provider}
-                    {recalled[m.id] > 0 && <span> 🧠 과거 대화 {recalled[m.id]}건 참조</span>}
-                    {sermonRag[m.id] > 0 && <span> ⛪ 목사님 설교 RAG {sermonRag[m.id]}건 참조</span>}
+                  <div className="msg-meta">
+                    <span>{m.provider}</span>
+                    {recalled[m.id] > 0 && <span className="meta-chip"><MemoryIcon size={13} /> 과거 대화 {recalled[m.id]}건 참조</span>}
+                    {sermonRag[m.id] > 0 && <span className="meta-chip"><BookIcon size={13} /> 목사님 설교 RAG {sermonRag[m.id]}건 참조</span>}
                     {(["up", "down"] as const).map(kind => (
                       <button key={kind}
                               onClick={async () => {
@@ -422,27 +411,27 @@ export default function Chat() {
                               }}
                               title={kind === "up" ? "좋아요 — 이런 답변을 우선 회상"
                                                    : "싫어요 — 이런 답변은 회피"}
-                              style={{ marginLeft: 4, border: "none", borderRadius: 6,
-                                       padding: "2px 7px", cursor: "pointer",
-                                       background: fb[m.id] === kind ? "#c9e5cf" : "transparent",
-                                       opacity: fb[m.id] && fb[m.id] !== kind ? 0.35 : 1 }}>
-                        {kind === "up" ? "👍" : "👎"}
+                              aria-label={kind === "up" ? "좋아요" : "싫어요"}
+                              className={`fb-btn${fb[m.id] === kind ? " is-selected" : ""}${fb[m.id] && fb[m.id] !== kind ? " is-dim" : ""}`}>
+                        {kind === "up" ? <ThumbUpIcon size={15} /> : <ThumbDownIcon size={15} />}
                       </button>
                     ))}
-                    {fb[m.id] && <span style={{ marginLeft: 6, color: "#2a7" }}>학습에 반영됨</span>}
+                    {fb[m.id] && <span className="fb-note">학습에 반영됨</span>}
                   </div>
                 )}
               </div>
             );
           })}
           <div ref={bottomRef} />
+          </div>
         </div>
-        <div style={{ display: "flex", padding: 8, borderTop: "1px solid #ddd" }}>
-          <textarea value={input} onChange={e => setInput(e.target.value)}
-                    onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
-                    placeholder="메시지 (@claude / @codex 로 강제 지정)"
-                    style={{ flex: 1, resize: "none", height: 60 }} />
-          <button onClick={send} disabled={busy} style={{ marginLeft: 8 }}>보내기</button>
+        <div className="composer-wrap">
+          <div className="composer">
+            <textarea className="composer-input" value={input} onChange={e => setInput(e.target.value)}
+                      onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
+                      placeholder="메시지 (@claude / @codex 로 강제 지정)" />
+            <button className="btn-primary send-btn" onClick={send} disabled={busy}>보내기</button>
+          </div>
         </div>
       </main>
       {preview && (

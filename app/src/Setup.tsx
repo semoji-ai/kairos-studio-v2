@@ -2,8 +2,6 @@ import { useEffect, useState } from "react";
 import { installCli, installWorkspace, openLogin, putSettings, setupStatus } from "./api";
 import type { SetupStatus } from "./api";
 
-const card: React.CSSProperties = { border: "1px solid #ddd", borderRadius: 8, padding: 16, marginBottom: 16 };
-
 export default function Setup({ onDone }: { onDone: () => void }) {
   const [status, setStatus] = useState<SetupStatus | null>(null);
   const [installing, setInstalling] = useState(false);
@@ -63,70 +61,70 @@ export default function Setup({ onDone }: { onDone: () => void }) {
   const authed = !!claude?.authed;
 
   return (
-    <main style={{ flex: 1, display: "flex", flexDirection: "column", overflowY: "auto", padding: 24, fontFamily: "sans-serif", maxWidth: 640, margin: "0 auto" }}>
-      <h2>카이로스 스튜디오 첫 실행 설정</h2>
+    <main className="page">
+      <div className="page-inner narrow">
+      <header className="page-header">
+        <div>
+          <span className="page-eyebrow">KAIROS STUDIO</span>
+          <h1>카이로스 스튜디오 첫 실행 설정</h1>
+        </div>
+      </header>
 
-      <section style={card}>
-        <h3>① Claude 설치 {installed && "✅"}</h3>
+      <section className="card">
+        <h3><span className="setup-step">1</span> Claude 설치
+          {installed && <span className="setup-done">✅ 완료</span>}</h3>
         {installed ? (
-          <p>설치되어 있습니다{claude?.version ? ` (${claude.version})` : ""}.</p>
+          <p className="hint">설치되어 있습니다{claude?.version ? ` (${claude.version})` : ""}.</p>
         ) : (
-          <>
-            <button disabled={installing} onClick={doInstallCli}>
+          <div className="stack">
+            <div><button className="btn-primary" disabled={installing} onClick={doInstallCli}>
               {installing ? "설치 중..." : "설치하기"}
-            </button>
-            {installResult && (
-              <div style={{ marginTop: 8 }}>
-                {installResult.ok ? (
-                  <span>설치 완료</span>
-                ) : (
-                  <div style={{ background: "#fee2e2", color: "#991b1b", padding: 8, borderRadius: 4, fontSize: 12 }}>
-                    설치 실패. 수동 설치가 필요할 수 있습니다.
-                    {installResult.tail && <pre style={{ whiteSpace: "pre-wrap" }}>{installResult.tail}</pre>}
-                  </div>
-                )}
+            </button></div>
+            {installResult && (installResult.ok ? (
+              <div className="notice ok">설치 완료</div>
+            ) : (
+              <div className="notice error">
+                설치 실패. 수동 설치가 필요할 수 있습니다.
+                {installResult.tail && <pre>{installResult.tail}</pre>}
               </div>
-            )}
-          </>
+            ))}
+          </div>
         )}
       </section>
 
-      <section style={card}>
-        <h3>② 로그인 {authed && "✅"}</h3>
+      <section className="card">
+        <h3><span className="setup-step">2</span> 로그인
+          {authed && <span className="setup-done">✅ 완료</span>}</h3>
         {authed ? (
-          <p>로그인되어 있습니다.</p>
+          <p className="hint">로그인되어 있습니다.</p>
         ) : (
-          <>
-            <button onClick={doOpenLogin} disabled={!installed}>로그인 터미널 열기</button>
-            <button style={{ marginLeft: 8 }} disabled={checking} onClick={doCheck}>
+          <div className="field-row">
+            <button className="btn-primary" onClick={doOpenLogin} disabled={!installed}>로그인 터미널 열기</button>
+            <button disabled={checking} onClick={doCheck}>
               {checking ? "확인 중..." : "다시 확인"}
             </button>
-          </>
+          </div>
         )}
       </section>
 
-      <section style={card}>
-        <h3>③ 설교 도우미 (선택) {status?.workspace_ready && "✅"}</h3>
+      <section className="card">
+        <h3><span className="setup-step">3</span> 설교 도우미 (선택)
+          {status?.workspace_ready && <span className="setup-done">✅ 완료</span>}</h3>
         {status?.workspace_ready ? (
-          <p>스킬 사용 가능. 작업 폴더: {status.workspace_dir}</p>
+          <p className="hint">스킬 사용 가능. 작업 폴더: {status.workspace_dir}</p>
         ) : (
-          <>
-            <button disabled={wsInstalling} onClick={doInstallWorkspace}>
+          <div className="stack">
+            <div><button disabled={wsInstalling} onClick={doInstallWorkspace}>
               {wsInstalling ? "설치 중..." : "설치"}
-            </button>
-            {wsError && (
-              <div style={{ background: "#fee2e2", color: "#991b1b", padding: 8, borderRadius: 4, marginTop: 8, fontSize: 12 }}>
-                {wsError}
-              </div>
-            )}
-          </>
+            </button></div>
+            {wsError && <div className="notice error">{wsError}</div>}
+          </div>
         )}
         {wsResult && (
-          <div style={{ marginTop: 8 }}>
-            <div>스킬 {wsResult.skills}개 설치됨.</div>
-            <div style={{ fontSize: 12, marginTop: 4 }}>
+          <div className="stack" style={{ marginTop: 12 }}>
+            <div className="status-ok">스킬 {wsResult.skills}개 설치됨.</div>
+            <div className="field-row hint">
               스킬이 파일을 쓰려면 권한을 acceptEdits로 올리는 것을 권장합니다.
-              {" "}
               <button disabled={permBumped} onClick={bumpPermission}>
                 {permBumped ? "권한 상향됨" : "권한 올리기"}
               </button>
@@ -135,9 +133,10 @@ export default function Setup({ onDone }: { onDone: () => void }) {
         )}
       </section>
 
-      <button disabled={!status?.all_ready} onClick={onDone} style={{ padding: "8px 24px", fontWeight: "bold" }}>
+      <button className="btn-primary setup-start" disabled={!status?.all_ready} onClick={onDone}>
         시작하기
       </button>
+      </div>
     </main>
   );
 }
