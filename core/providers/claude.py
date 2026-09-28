@@ -18,6 +18,10 @@ _PREP_SCRIPTS = [
 ]
 _INTERPRETERS = ["py -3", "py", "python", "python3"]
 
+MODEL = "claude-opus-5-5"
+# Opus 5.5의 기본 effort는 medium(4.8보다 한 단계 낮음) — 원고 품질 유지를 위해 명시한다.
+EFFORT = "high"
+
 
 def allowed_tools(workspace: str | None = None) -> list[str]:
     """준비 스크립트 호출의 경로 표기 변형을 모두 허용 목록으로 만든다.
@@ -58,7 +62,8 @@ def chat(prompt: str, session_ref: str | None = None,
         "-p", prompt,
         "--output-format", "stream-json",
         "--verbose",
-        "--model", "claude-opus-4-8",
+        "--model", MODEL,
+        "--effort", EFFORT,
         "--include-partial-messages",
         "--permission-mode", mode,  # 안전: 비대화 모드에서 위험 툴 거부
     ]
