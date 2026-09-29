@@ -28,7 +28,6 @@
   --info-soft: #e4edf3;
   --btn-bg: #fffdf8;
   --btn-bg-hover: #f3ede1;
-  --icon-filter: none;
   --code-bg: #efe8da;
   --pre-bg: #2b2620;
   --pre-ink: #f1ebdf;
@@ -82,7 +81,6 @@
     --info-soft: rgba(156, 195, 224, 0.16);
     --btn-bg: #2f2a24;
     --btn-bg-hover: #3b352d;
-    --icon-filter: brightness(0.86) saturate(0.9);
     --code-bg: #332e27;
     --pre-bg: #121110;
     --pre-ink: #e9e1d4;
@@ -152,7 +150,8 @@ textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; 
 }
 input::placeholder, textarea::placeholder { color: var(--muted); }
 
-.icon { width: 16px; height: 16px; flex: none; }
+/* 도자기 이모지(투명 PNG) — 글자 기준선에 맞춰 앉힌다 */
+.emoji { display: inline-block; flex: none; vertical-align: -0.22em; user-select: none; }
 
 /* ── 앱 골격 ─────────────────────────────────────────────── */
 .app-shell { display: flex; flex-direction: column; height: 100vh; }
@@ -223,7 +222,7 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 }
 .nav-item:hover:not(:disabled) { background: var(--accent-soft); border-color: transparent; }
 .nav-item.is-active { color: var(--ink); background: var(--surface); border-color: var(--line); font-weight: 650; box-shadow: var(--shadow-sm); }
-.nav-item img { width: 22px; height: 22px; border-radius: 5px; flex: none; filter: var(--icon-filter); }
+.nav-item img { width: 28px; height: 28px; flex: none; }
 .sidebar-label {
   margin: 22px 10px 6px;
   color: var(--muted);
@@ -458,7 +457,6 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
   text-align: left;
 }
 .artifact-chip:hover:not(:disabled) { border-color: var(--accent); background: var(--surface); }
-.artifact-chip > span:first-child { color: var(--accent); }
 .artifact-chip > span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .artifact-chip small { color: var(--muted); font-weight: 500; }
 
@@ -696,7 +694,7 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .rule-list { display: grid; gap: 6px; margin: 12px 0 0; padding: 0; list-style: none; }
 .rule-list li { padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); }
 .setup-step { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; color: var(--accent); background: var(--accent-soft); font-size: 13px; font-weight: 700; }
-.setup-done { margin-left: auto; color: var(--success); font-size: 12px; font-weight: 700; }
+.setup-done { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; color: var(--success); font-size: 12px; font-weight: 700; }
 .setup-start { width: 100%; padding: 12px; font-size: 15px; }
 
 /* ── 설교 커버리지 ───────────────────────────────────────── */
@@ -792,7 +790,7 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .drop-zone input { display: none; }
 .drop-zone strong { margin: 8px 0 4px; color: var(--ink); font-size: 14px; }
 .drop-zone small { color: var(--muted); }
-.drop-icon { display: grid; width: 36px; height: 36px; place-items: center; border-radius: 11px; color: var(--accent); background: var(--gold); font-size: 22px; }
+.drop-icon { display: grid; place-items: center; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 20px; }
 .form-grid label { display: flex; flex-direction: column; gap: 7px; color: var(--ink-2); font-size: 12px; font-weight: 700; }
 .form-grid label small { color: var(--muted); font-weight: 500; }
@@ -849,7 +847,7 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .presentation-result-actions .retry-action { margin-top: 12px; }
 .ppt-notice { margin: 10px 10px 12px; padding: 9px 11px; border-radius: 8px; color: var(--success); background: var(--success-soft); font-size: 12px; overflow-wrap: anywhere; }
 .empty-jobs { display: grid; min-height: 250px; place-items: center; align-content: center; color: var(--muted); }
-.empty-jobs span { font-size: 32px; color: var(--line-strong); }
+.empty-jobs .emoji { margin-bottom: 4px; opacity: .9; }
 .empty-jobs p { font-size: 13px; }
 @media (max-width: 900px) {
   .ppt-studio { padding: 26px 20px; }

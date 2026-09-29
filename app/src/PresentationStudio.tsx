@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { createPresentation, listPresentations, openPresentation, presentationEngines, retryPresentation } from "./api";
+import { Emoji } from "./emoji";
 import type { PresentationEngines, PresentationJob } from "./api";
 
 const labels = { queued: "대기 중", running: "제작 중", completed: "완료", failed: "실패" };
@@ -102,7 +103,7 @@ export default function PresentationStudio() {
           >
             <input type="file" accept=".pdf,.docx,.hwp,.hwpx,.md,.markdown"
               onChange={e => pickFile(e.target.files?.[0] ?? null)} />
-            <span className="drop-icon">{file ? "✓" : "＋"}</span>
+            <span className="drop-icon"><Emoji name={file ? "selected" : "upload"} size={44} /></span>
             <strong>{dragging ? "여기에 놓으세요" : file ? file.name : "강의안 문서를 끌어놓거나 선택하세요"}</strong>
             <small>{file ? `${(file.size / 1024 / 1024).toFixed(1)} MB` : "PDF · DOCX · HWP · HWPX · MD / 최대 100MB"}</small>
           </label>
@@ -151,7 +152,7 @@ export default function PresentationStudio() {
         <div className="ppt-card jobs-card">
           <div className="jobs-title"><div><h2>제작 작업 · 히스토리</h2><small>앱을 재시작해도 이 기기에 계속 보존됩니다.</small></div><span>{jobs.length}</span></div>
           <div className="job-list">
-            {!jobs.length && <div className="empty-jobs"><span>◫</span><p>아직 제작한 PPT가 없습니다.</p></div>}
+            {!jobs.length && <div className="empty-jobs"><Emoji name="empty" size={64} /><p>아직 제작한 PPT가 없습니다.</p></div>}
             {jobs.map(job => <article className="job-item" key={job.id}>
               <div className="job-row"><div><strong>{job.title}</strong><small>{job.source_name} · {job.provider} · {styleLabels[job.options?.style_preset ?? ""] ?? job.options?.tone ?? "기존 스타일"}</small>
                 {job.options?.image_style && <small>AI 이미지 · {engines?.image_styles?.find(style => style.id === job.options?.image_style)?.name ?? job.options.image_style}</small>}

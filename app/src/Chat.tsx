@@ -16,7 +16,7 @@ import pptIcon from "./assets/icons/ppt.png";
 import reviewIcon from "./assets/icons/review.png";
 import settingsIcon from "./assets/icons/settings.png";
 import { displayTitle, isInternalArtifact } from "./artifactNames";
-import { BookIcon, MemoryIcon, PlusIcon, ThumbDownIcon, ThumbUpIcon, TrashIcon } from "./icons";
+import { Emoji } from "./emoji";
 
 type Bubble = Msg | { id: "pending"; role: "assistant"; text: string; log: string };
 type StatusEvent = Extract<ChatEvent, { type: "status" }>;
@@ -293,7 +293,7 @@ export default function Chat() {
     <div className="app-shell">
       {!online && (
         <div className="offline-banner" role="alert">
-          ⚠️ 백엔드(사이드카)와 연결이 끊겼습니다. 앱을 껐다 다시 실행해 주세요.
+          <Emoji name="warn" size={16} /> 백엔드(사이드카)와 연결이 끊겼습니다. 앱을 껐다 다시 실행해 주세요.
           응답·성경 커버리지 등 모든 기능이 이 상태에서는 동작하지 않습니다.
         </div>
       )}
@@ -301,7 +301,7 @@ export default function Chat() {
       <aside className="sidebar">
         <div className="sidebar-brand">KAIROS <small>Studio</small></div>
         <button className="new-chat-btn"
-                onClick={() => { setSessionId(null); setView("chat"); }}><PlusIcon /> 새 대화</button>
+                onClick={() => { setSessionId(null); setView("chat"); }}><Emoji name="new" size={20} /> 새 대화</button>
         <nav className="nav-list">
           {([
             { key: "bible", icon: coverageIcon, label: "설교 커버리지",
@@ -332,7 +332,7 @@ export default function Chat() {
                       await deleteSession(s.id);
                       if (s.id === sessionId) { setSessionId(null); setMsgs([]); }
                       listSessions().then(setSessions);
-                    }}><TrashIcon size={15} /></button>
+                    }}><Emoji name="trash" size={16} /></button>
           </div>
         ))}
       </aside>
@@ -394,7 +394,7 @@ export default function Chat() {
                         return (
                           <button key={`${item.artifact}-${pi}`} type="button"
                                   className="artifact-chip" onClick={() => setPreview(item)}>
-                            <span>{item.type === "image" ? "▧" : "▤"}</span>
+                            <Emoji name={item.type === "image" ? "image" : "doc"} size={20} />
                             <span>{item.title}</span>
                             <small>미리보기</small>
                           </button>
@@ -406,8 +406,8 @@ export default function Chat() {
                 {!isPending && m.role === "assistant" && m.id > 0 && (
                   <div className="msg-meta">
                     <span>{m.provider}</span>
-                    {recalled[m.id] > 0 && <span className="meta-chip"><MemoryIcon size={13} /> 과거 대화 {recalled[m.id]}건 참조</span>}
-                    {sermonRag[m.id] > 0 && <span className="meta-chip"><BookIcon size={13} /> 목사님 설교 RAG {sermonRag[m.id]}건 참조</span>}
+                    {recalled[m.id] > 0 && <span className="meta-chip"><Emoji name="memory" size={15} /> 과거 대화 {recalled[m.id]}건 참조</span>}
+                    {sermonRag[m.id] > 0 && <span className="meta-chip"><Emoji name="sermon" size={15} /> 목사님 설교 RAG {sermonRag[m.id]}건 참조</span>}
                     {(["up", "down"] as const).map(kind => (
                       <button key={kind}
                               onClick={async () => {
@@ -419,7 +419,7 @@ export default function Chat() {
                                                    : "싫어요 — 이런 답변은 회피"}
                               aria-label={kind === "up" ? "좋아요" : "싫어요"}
                               className={`fb-btn${fb[m.id] === kind ? " is-selected" : ""}${fb[m.id] && fb[m.id] !== kind ? " is-dim" : ""}`}>
-                        {kind === "up" ? <ThumbUpIcon size={15} /> : <ThumbDownIcon size={15} />}
+                        <Emoji name={kind === "up" ? "like" : "dislike"} size={18} />
                       </button>
                     ))}
                     {fb[m.id] && <span className="fb-note">학습에 반영됨</span>}

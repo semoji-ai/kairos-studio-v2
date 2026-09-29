@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { installCli, installWorkspace, openLogin, putSettings, setupStatus } from "./api";
 import type { SetupStatus } from "./api";
+import { Emoji } from "./emoji";
 
 export default function Setup({ onDone }: { onDone: () => void }) {
   const [status, setStatus] = useState<SetupStatus | null>(null);
@@ -72,7 +73,7 @@ export default function Setup({ onDone }: { onDone: () => void }) {
 
       <section className="card">
         <h3><span className="setup-step">1</span> Claude 설치
-          {installed && <span className="setup-done">✅ 완료</span>}</h3>
+          {installed && <span className="setup-done"><Emoji name="done" size={18} /> 완료</span>}</h3>
         {installed ? (
           <p className="hint">설치되어 있습니다{claude?.version ? ` (${claude.version})` : ""}.</p>
         ) : (
@@ -94,7 +95,7 @@ export default function Setup({ onDone }: { onDone: () => void }) {
 
       <section className="card">
         <h3><span className="setup-step">2</span> 로그인
-          {authed && <span className="setup-done">✅ 완료</span>}</h3>
+          {authed && <span className="setup-done"><Emoji name="done" size={18} /> 완료</span>}</h3>
         {authed ? (
           <p className="hint">로그인되어 있습니다.</p>
         ) : (
@@ -109,7 +110,7 @@ export default function Setup({ onDone }: { onDone: () => void }) {
 
       <section className="card">
         <h3><span className="setup-step">3</span> 설교 도우미 (선택)
-          {status?.workspace_ready && <span className="setup-done">✅ 완료</span>}</h3>
+          {status?.workspace_ready && <span className="setup-done"><Emoji name="done" size={18} /> 완료</span>}</h3>
         {status?.workspace_ready ? (
           <p className="hint">스킬 사용 가능. 작업 폴더: {status.workspace_dir}</p>
         ) : (
