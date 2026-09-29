@@ -6,11 +6,12 @@ import {
 import type {
   CliStatus, Rule, Settings as SettingsType, StorageInfo, WorkspaceInfo, WorkspaceUpdateStatus,
 } from "./api";
+import { Emoji } from "./emoji";
 
-function badge(installed: boolean, authed: boolean | null): string {
-  if (!installed) return "❌";
+function badge(installed: boolean, authed: boolean | null): React.ReactNode {
+  if (!installed) return <Emoji name="fail" label="안 됨" />;
   if (authed === null) return "확인 불가";
-  return authed ? "✅" : "❌";
+  return authed ? <Emoji name="done" label="됨" /> : <Emoji name="fail" label="안 됨" />;
 }
 
 export default function Settings({ onClose }: { onClose: () => void }) {
@@ -143,7 +144,7 @@ export default function Settings({ onClose }: { onClose: () => void }) {
               <div key={name} className="cli-card">
                 <strong>{name}</strong>
                 <dl className="kv">
-                  <dt>설치</dt><dd>{st.installed ? "✅" : "❌"}</dd>
+                  <dt>설치</dt><dd>{st.installed ? <Emoji name="done" label="됨" /> : <Emoji name="fail" label="안 됨" />}</dd>
                   <dt>버전</dt><dd>{st.version ?? "-"}</dd>
                   <dt>로그인</dt><dd>{badge(st.installed, st.authed)}</dd>
                 </dl>

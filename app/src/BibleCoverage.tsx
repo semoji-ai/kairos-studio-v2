@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { bibleCoverage } from "./api";
+import { Emoji } from "./emoji";
 import type { BibleBook, BibleChapter } from "./api";
 
 /** 성경 66권 장별 설교 커버리지 체크 페이지. */
@@ -17,7 +18,7 @@ export default function BibleCoverage() {
   const chapter = useMemo(
     () => book?.chapters.find(c => c.n === selCh) ?? null, [book, selCh]);
 
-  if (error) return <div className="page-status">⚠️ {error}</div>;
+  if (error) return <div className="page-status"><Emoji name="warn" size={18} /> {error}</div>;
   if (!books) return <div className="page-status">커버리지 계산 중…</div>;
 
   const total = books.reduce((a, b) => a + b.total_chapters, 0);
