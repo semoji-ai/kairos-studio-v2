@@ -108,3 +108,43 @@ def test_scoped_workflow_allowed_tools_from_cfg(monkeypatch):
     argv = _json.loads(done["text"])
     pairs = list(zip(argv, argv[1:]))
     assert ("--allowedTools", spec) in pairs
+
+
+def test_allowed_tools_cover_forward_slash_workspace_paths():
+    # Windows에서 Path()가 백슬래시로 바꿔도, 모델이 부르는 "D:/..." 와
+    # Git Bash "/d/..." 형태가 모두 허용 목록에 있어야 한다.
+    from core.providers import claude
+    specs = claude.allowed_tools("D:/projects/publish-agent")
+    assert "Bash(py -3 D:/projects/publish-agent/tools/bible_lookup.py:*)" in specs
+    assert r"Bash(py -3 D:\projects\publish-agent\tools\bible_lookup.py:*)" in specs
+    assert "Bash(py -3 /d/projects/publish-agent/tools/bible_lookup.py:*)" in specs
+    assert "Bash(py -3 tools/bible_lookup.py:*)" in specs
+
+
+def test_allowed_tools_include_length_gate_and_env_prefix():
+    from core.providers import claude
+    specs = claude.allowed_tools()
+    assert "Bash(py -3 skills/shared/scripts/audit_sermon_length.py:*)" in specs
+    assert "Bash(PYTHONIOENCODING=utf-8 py -3 tools/bible_lookup.py:*)" in specs
+
+
+def test_allowed_tools_fit_windows_command_line():
+    # CreateProcess 한도는 32,767자 — 프롬프트 몫을 넉넉히 남겨 둔다.
+    from core.providers import claude
+    specs = claude.allowed_tools("D:/projects/publish-agent")
+    assert sum(len(s) + len(" --allowedTools ") for s in specs) < 16000
+
+
+def test_output_dir_is_added_as_working_dir(monkeypatch, tmp_path):
+    monkeypatch.setenv("KAIROS_CLAUDE_CMD", f"{sys.executable} {FAKE_ARGV}")
+    from core.providers import claude
+    done = list(claude.chat("hi", cfg={"output_dir": str(tmp_path)}))[-1]
+    argv = _json.loads(done["text"])
+    assert argv[argv.index("--add-dir") + 1] == str(tmp_path)
+
+
+def test_no_add_dir_without_output_dir(monkeypatch):
+    monkeypatch.setenv("KAIROS_CLAUDE_CMD", f"{sys.executable} {FAKE_ARGV}")
+    from core.providers import claude
+    done = list(claude.chat("hi"))[-1]
+    assert "--add-dir" not in _json.loads(done["text"])

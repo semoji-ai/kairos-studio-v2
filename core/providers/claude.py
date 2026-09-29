@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -14,9 +15,13 @@ from typing import Iterator
 _PREP_SCRIPTS = [
     "tools/bible_lookup.py",
     "skills/shared/scripts/verify_sermon.py",
+    "skills/shared/scripts/audit_sermon_length.py",
     "skills/shared/scripts/sermon_fingerprint.py",
 ]
 _INTERPRETERS = ["py -3", "py", "python", "python3"]
+# 모델이 한글 출력 깨짐을 피하려고 붙이는 환경변수 접두사. 접두사가 붙으면
+# 권한 매칭이 통째로 빗나가므로 대표 인터프리터에 한해 같이 허용한다.
+_ENV_PREFIXED = ["PYTHONIOENCODING=utf-8 py -3"]
 
 MODEL = "claude-opus-5-5"
 # Opus 5.5의 기본 effort는 medium(4.8보다 한 단계 낮음) — 원고 품질 유지를 위해 명시한다.
@@ -30,15 +35,27 @@ def allowed_tools(workspace: str | None = None) -> list[str]:
     호출하는데, 권한 매칭은 문자열 접두사 비교라 한 형태만 넣으면 나머지가
     조용히 차단된다(헤드리스에서는 프롬프트도 못 띄운다).
     """
-    specs: list[str] = []
-    bases = list(_PREP_SCRIPTS)
+    paths: list[str] = []
+    for s in _PREP_SCRIPTS:
+        paths += [s, s.replace("/", "\\")]
     if workspace:
-        root = str(Path(workspace).expanduser())
-        bases += [f"{root}/{s}" for s in _PREP_SCRIPTS]
-    for base in bases:
-        for path in {base, base.replace("/", "\\")}:
-            for interp in _INTERPRETERS:
-                specs.append(f"Bash({interp} {path}:*)")
+        # Path()는 Windows에서 구분자를 백슬래시로 바꾼다. 모델은 주로
+        # "D:/projects/..." 나 Git Bash의 "/d/projects/..." 로 부르므로
+        # 슬래시 형태를 따로 만들어야 한다 (백슬래시 형태만 있으면 전부 거부됨).
+        root = str(Path(workspace).expanduser()).replace("\\", "/").rstrip("/")
+        roots = [root, root.replace("/", "\\")]
+        drive = re.match(r"^([A-Za-z]):/", root)
+        if drive:
+            roots.append(f"/{drive.group(1).lower()}/{root[3:]}")
+        for r in roots:
+            sep = "\\" if "\\" in r else "/"
+            paths += [f"{r}{sep}{s.replace('/', sep)}" for s in _PREP_SCRIPTS]
+
+    specs: list[str] = []
+    for path in dict.fromkeys(paths):
+        for interp in _INTERPRETERS + _ENV_PREFIXED:
+            specs.append(f"Bash({interp} {path}:*)")
+            if ":" in path:  # 드라이브 절대경로는 따옴표로 감싸 부르기도 한다
                 specs.append(f'Bash({interp} "{path}":*)')
     return specs
 
@@ -77,6 +94,11 @@ def chat(prompt: str, session_ref: str | None = None,
     for spec in (cfg or {}).get("claude_allowed_tools", []):
         if isinstance(spec, str) and spec.startswith("Bash(") and spec.endswith(")"):
             cmd += ["--allowedTools", spec]
+    # 결과물 폴더(output_dir)는 워크스페이스 밖에 있는 경우가 많다. 작업
+    # 디렉터리로 추가하지 않으면 세션 폴더에 원고를 저장하지 못한다.
+    out_dir = (cfg or {}).get("output_dir")
+    if out_dir:
+        cmd += ["--add-dir", str(Path(out_dir).expanduser())]
     if session_ref:
         cmd += ["--resume", session_ref]
     ws = (cfg or {}).get("workspace_dir")
