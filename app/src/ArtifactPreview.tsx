@@ -11,6 +11,7 @@ import {
 export type ArtifactPreviewItem = {
   artifact: string;
   title: string;
+  fileName?: string;  // 실제 파일명 — 화면 이름(title)과 달라도 다운로드는 원래 이름으로
   type: "image" | "document";
   sourceUrl?: string;
   sourcePath?: string;
@@ -207,7 +208,7 @@ export default function ArtifactPreview({
               {copied ? "복사됨 ✓" : "복사"}
             </button>
           )}
-          <a href={url} download={item.title} title="파일 다운로드">다운로드</a>
+          <a href={url} download={item.fileName || item.title} title="파일 다운로드">다운로드</a>
           <button type="button" className="close" onClick={onClose} aria-label="미리보기 닫기">×</button>
         </div>
       </header>

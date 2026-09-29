@@ -859,3 +859,21 @@ def test_setup_update_workspace_requires_token_and_workspace(srv, tmp_path, monk
     with pytest.raises(urllib.error.HTTPError) as no_ws:
         _req(url, "/setup/update-workspace", {})
     assert no_ws.value.code == 400
+
+
+def test_artifact_with_korean_filename_is_served(srv, monkeypatch, tmp_path):
+    # 브라우저는 한글 파일명을 퍼센트 인코딩해 요청한다.
+    url, store = srv
+    doc = tmp_path / "2026-10-04_아직-감옥이-끝이-아니다.md"
+    doc.write_text("# 원고", encoding="utf-8")
+    monkeypatch.setenv("KAIROS_CLAUDE_CMD",
+                       f"{sys.executable} {FAKES/'fake_echo_claude.py'}")
+    done = _sse_events(_req(url, "/chat", {"text": f"@claude 결과: {doc}"}))[-1]
+    assert done["artifacts"] == 1
+    msgs = json.load(_req(url, f"/messages?session_id={done['session_id']}"))["messages"]
+    artifact_path = next(p for p in msgs[-1]["content"]
+                         if p.get("type") == "document")["artifact"]
+
+    resp = _req(url, f"/artifacts/{urllib.parse.quote(artifact_path)}", token=None)
+    assert resp.status == 200
+    assert resp.read() == doc.read_bytes()

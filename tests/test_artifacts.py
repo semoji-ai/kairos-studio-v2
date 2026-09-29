@@ -86,8 +86,37 @@ def test_collect_caps_at_six(tmp_path):
     paths = []
     for i in range(8):
         p = tmp_path / f"img{i}.png"
-        p.write_bytes(b"x")
+        p.write_bytes(f"x{i}".encode())
         paths.append(str(p))
     text = " ".join(paths)
     parts = collect(text, workspace_dir=None, data_dir=data_dir, message_id=7)
     assert len(parts) == 6
+
+
+def test_collect_skips_internal_working_files(tmp_path):
+    work = tmp_path / "plans"
+    (work / "sections").mkdir(parents=True)
+    draft = work / "draft.md"
+    draft.write_text("# 원고", encoding="utf-8")
+    report = work / "gate-report.md"
+    report.write_text("# 게이트", encoding="utf-8")
+    temp = work / "_sents.md"
+    temp.write_text("임시", encoding="utf-8")
+    section = work / "sections" / "01_S1.md"
+    section.write_text("S1", encoding="utf-8")
+    text = f"{draft}\n{report}\n{temp}\n{section}"
+    parts = collect(text, None, tmp_path / "data", message_id=1)
+    assert [p["title"] for p in parts] == ["draft.md"]
+
+
+def test_collect_attaches_identical_copies_once(tmp_path):
+    work = tmp_path / "plans"
+    out = tmp_path / "out"
+    work.mkdir()
+    out.mkdir()
+    draft = work / "draft.md"
+    draft.write_text("# 같은 원고", encoding="utf-8")
+    copy = out / "2026-10-04_아직-감옥이-끝이-아니다.md"
+    copy.write_text("# 같은 원고", encoding="utf-8")
+    parts = collect(f"{copy}\n{draft}", None, tmp_path / "data", message_id=1)
+    assert [p["title"] for p in parts] == [copy.name]

@@ -15,6 +15,7 @@ import coverageIcon from "./assets/icons/coverage.png";
 import pptIcon from "./assets/icons/ppt.png";
 import reviewIcon from "./assets/icons/review.png";
 import settingsIcon from "./assets/icons/settings.png";
+import { displayTitle, isInternalArtifact } from "./artifactNames";
 import { BookIcon, MemoryIcon, PlusIcon, ThumbDownIcon, ThumbUpIcon, TrashIcon } from "./icons";
 
 type Bubble = Msg | { id: "pending"; role: "assistant"; text: string; log: string };
@@ -84,9 +85,11 @@ function decodedLinkPath(value: string): string {
 
 function previewItem(part: ArtifactPart, messageId?: number): ArtifactPreviewItem | null {
   if (!part.artifact || (part.type !== "image" && part.type !== "document")) return null;
+  const fileName = part.title || basename(part.artifact);
   return {
     artifact: part.artifact,
-    title: part.title || basename(part.artifact) || "산출물",
+    title: displayTitle(fileName) || "산출물",
+    fileName,
     type: part.type,
     sourcePath: part.source_path,
     messageId,
@@ -110,7 +113,8 @@ function matchingArtifact(
     const match = parts.find(part => part.artifact === decoded);
     return match ? previewItem(match, messageId) : {
       artifact: decoded,
-      title: basename(decoded) || "산출물",
+      title: displayTitle(basename(decoded)) || "산출물",
+      fileName: basename(decoded),
       type: /\.(?:png|jpe?g|webp|gif)$/i.test(decoded) ? "image" : "document",
     };
   }
@@ -126,7 +130,8 @@ function matchingArtifact(
   const localPath = decodedLinkPath(href).replace(/^file:\/\/\//i, "");
   return {
     artifact: "",
-    title: name || "산출물",
+    title: displayTitle(name) || "산출물",
+    fileName: name,
     type: image ? "image" : "document",
     sourceUrl: workspaceFileUrl(localPath),
     sourcePath: localPath,
@@ -348,7 +353,8 @@ export default function Chat() {
             const log = isPending ? b.log : logOf(b as Msg);
             const m = b as Msg;
             const artifactParts = !isPending
-              ? m.content.filter(p => p.type === "image" || p.type === "document")
+              ? m.content.filter(p => (p.type === "image" || p.type === "document")
+                  && !isInternalArtifact(p.source_path || p.artifact || ""))
               : [];
             return (
               <div key={i} className={`msg-row ${b.role}`}>
