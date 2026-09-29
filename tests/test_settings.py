@@ -70,3 +70,27 @@ def test_learning_recall_flag_validation():
     settings.save({"learning_recall_enabled": False})
     with pytest.raises(ValueError):
         settings.save({"learning_recall_enabled": "yes"})
+
+
+def test_font_defaults_to_system():
+    s = settings.load()
+    assert s["font_body"] == "system"
+    assert s["font_heading"] == "system"
+
+
+def test_font_choice_persists_and_rejects_unknown():
+    s = settings.save({"font_body": "pretendard", "font_heading": "gowun-batang"})
+    assert (s["font_body"], s["font_heading"]) == ("pretendard", "gowun-batang")
+    for patch in [{"font_body": "comic-sans"}, {"font_heading": "pretendard"},
+                  {"font_body": "gowun-batang"}]:
+        with pytest.raises(ValueError):
+            settings.save(patch)
+
+
+def test_font_invalid_stored_value_falls_back(cfg_dir):
+    # 손으로 고쳤거나 이후 버전에서 빠진 글꼴이면 기본값으로 되돌린다
+    (cfg_dir / "settings.json").write_text(
+        json.dumps({"font_body": "removed-font", "font_heading": "maruburi"}))
+    s = settings.load()
+    assert s["font_body"] == "system"
+    assert s["font_heading"] == "maruburi"

@@ -34,9 +34,10 @@
   --shadow-sm: 0 1px 2px rgba(60, 42, 20, 0.06);
   --shadow-md: 0 1px 2px rgba(60, 42, 20, 0.05), 0 8px 24px rgba(60, 42, 20, 0.08);
 
-  --sans: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", Pretendard,
-    "Malgun Gothic", "맑은 고딕", "Segoe UI", system-ui, sans-serif;
-  --serif: "AppleMyungjo", "Nanum Myeongjo", "나눔명조", Batang, "바탕", Georgia, serif;
+  /* 사용자가 설정에서 글꼴을 고르면 fonts.ts 의 applyFonts 가 이 두 값을 덮어쓴다 */
+  --sans: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic",
+    "맑은 고딕", "Segoe UI", system-ui, sans-serif;
+  --serif: "AppleMyungjo", Batang, "바탕", Georgia, serif;
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 
   --radius-sm: 6px;
@@ -691,6 +692,22 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .cli-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
 .cli-card { padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); }
 .cli-card > strong { display: block; margin-bottom: 8px; color: var(--ink); font-size: 15px; }
+.font-preview {
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  line-height: 1.75;
+}
+.font-preview h2 { margin: 0 0 8px; font-size: 22px; }
+.font-preview blockquote {
+  margin: 0 0 10px;
+  padding-left: 14px;
+  border-left: 3px solid var(--gold);
+  color: var(--ink);
+  font-family: var(--serif);
+}
+.font-preview p { color: var(--ink-2); }
 .rule-list { display: grid; gap: 6px; margin: 12px 0 0; padding: 0; list-style: none; }
 .rule-list li { padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); }
 .setup-step { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; color: var(--accent); background: var(--accent-soft); font-size: 13px; font-weight: 700; }

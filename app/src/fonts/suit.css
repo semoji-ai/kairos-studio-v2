@@ -1,0 +1,15 @@
+/* SUIT 패키지의 CSS는 9개 굵기를 모두 싣는다 — 앱에는 보통·굵게만 담는다 */
+@font-face {
+  font-family: 'SUIT';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('../../node_modules/@sun-typeface/suit/fonts/static/woff2/SUIT-Regular.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'SUIT';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('../../node_modules/@sun-typeface/suit/fonts/static/woff2/SUIT-Bold.woff2') format('woff2');
+}

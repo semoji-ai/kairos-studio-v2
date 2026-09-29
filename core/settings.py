@@ -14,12 +14,18 @@ DEFAULTS = {
     "workspace_dir": None,
     "output_dir": None,
     "learning_recall_enabled": True,
+    "font_body": "system",
+    "font_heading": "system",
 }
 
 _ALLOWED = {
     "default_provider": {"claude", "codex"},
     "codex_sandbox": {"read-only", "workspace-write"},
     "claude_permission_mode": {"default", "acceptEdits"},
+    # 앱에 번들된 글꼴 id — app/src/fonts.ts 의 목록과 같아야 한다
+    "font_body": {"system", "pretendard", "suit", "ibm-plex-sans-kr", "nanum-gothic"},
+    "font_heading": {"system", "maruburi", "gowun-batang",
+                     "noto-serif-kr", "nanum-myeongjo", "hahmlet"},
 }
 
 
@@ -77,6 +83,10 @@ def restore_raw(raw: dict) -> None:
 def load() -> dict:
     merged = dict(DEFAULTS)
     merged.update(_load_raw())
+    # 글꼴은 목록에서 빠질 수 있으니(버전 변경·수동 편집) 모르는 값은 기본값으로
+    for key in ("font_body", "font_heading"):
+        if merged[key] not in _ALLOWED[key]:
+            merged[key] = DEFAULTS[key]
     return merged
 
 

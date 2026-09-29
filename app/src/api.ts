@@ -75,6 +75,8 @@ export type Settings = {
   claude_permission_mode: "default" | "acceptEdits";
   workspace_dir: string | null;
   output_dir: string | null;
+  font_body: string;
+  font_heading: string;
 };
 export type WorkspaceInfo = {
   workspace_dir: string | null; exists: boolean | null;
