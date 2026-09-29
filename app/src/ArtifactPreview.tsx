@@ -40,6 +40,7 @@ export default function ArtifactPreview({
   const [saving, setSaving] = useState(false);
   const [saveNotice, setSaveNotice] = useState("");
   const [review, setReview] = useState<TheologyReviewDocument | null>(null);
+  const [copied, setCopied] = useState(false);
   const url = item.sourceUrl || `/artifacts/${item.artifact}`;
   const extension = extensionOf(item.sourcePath || item.title || item.artifact);
 
@@ -94,6 +95,30 @@ export default function ArtifactPreview({
       controller.abort();
     };
   }, [extension, item.artifact, item.type, url]);
+
+  async function copyBody() {
+    const text = editing ? draft : body;
+    if (!text) return;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        // 클립보드 API를 못 쓰는 환경(비보안 컨텍스트 등) 폴백
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      }
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1800);
+    } catch {
+      setError("클립보드에 복사하지 못했습니다.");
+    }
+  }
 
   async function save() {
     if (!item.sourcePath || saving) return;
@@ -175,8 +200,15 @@ export default function ArtifactPreview({
               <button type="button" onClick={() => setEditing(true)}>편집</button>
             )
           )}
+          {item.type === "document" && !review && extension !== ".pdf" && (body || draft) && (
+            <button type="button" className={`copy${copied ? " copied" : ""}`}
+                    onClick={copyBody}
+                    title="본문 전체를 클립보드에 복사">
+              {copied ? "복사됨 ✓" : "복사"}
+            </button>
+          )}
           <a href={url} download={item.title} title="파일 다운로드">다운로드</a>
-          <button type="button" onClick={onClose} aria-label="미리보기 닫기">×</button>
+          <button type="button" className="close" onClick={onClose} aria-label="미리보기 닫기">×</button>
         </div>
       </header>
       {saveNotice && <div className="artifact-save-notice">{saveNotice}</div>}
