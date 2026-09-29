@@ -493,7 +493,8 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
 
         def _serve_artifact(self, url_path: str):
             root = (self._data_dir() / "artifacts").resolve()
-            rel = url_path[len("/artifacts/"):].split("?", 1)[0]
+            # 브라우저는 한글 파일명을 %EC%95%84… 로 보낸다 — 풀지 않으면 404.
+            rel = unquote(url_path[len("/artifacts/"):].split("?", 1)[0])
             target = (root / rel).resolve()
             try:
                 target.relative_to(root)

@@ -57,6 +57,18 @@ def extract_artifacts(text: str, workspace_dir: str | None) -> list[Path]:
     return found
 
 
+def is_internal(path: Path) -> bool:
+    """목사님께 보일 필요 없는 작업용 파일인가.
+
+    검사 보고서(gate-report), 밑줄로 시작하는 임시 파일, 단락별 조각
+    (sections/) 은 원고 작업의 부산물이라 산출물로 붙이지 않는다.
+    """
+    name = path.name.lower()
+    if name.startswith("_") or re.match(r"gate[-_]?report", name):
+        return True
+    return path.parent.name.lower() == "sections"
+
+
 def _content_type(path: Path) -> str:
     return "image" if path.suffix.lower() in _IMAGE_EXTS else "document"
 
@@ -85,6 +97,7 @@ def collect(text: str, workspace_dir: str | None, data_dir: Path,
     data_dir = Path(data_dir)
     artifacts_root = (data_dir / "artifacts").resolve()
     parts: list[dict] = []
+    seen_contents: set[bytes] = set()
     try:
         candidates = extract_artifacts(text, workspace_dir)
     except Exception:
@@ -100,12 +113,20 @@ def collect(text: str, workspace_dir: str | None, data_dir: Path,
                 continue
             except ValueError:
                 pass
+            if is_internal(src):
+                continue
 
             ctype = _content_type(src)
             size = src.stat().st_size
             limit = _MAX_IMAGE_BYTES if ctype == "image" else _MAX_DOC_BYTES
             if size > limit:
                 continue
+            # 작업 폴더 원고를 결과물 폴더에 복사해 두는 경우가 많다 — 같은
+            # 내용은 한 번만 붙인다 (먼저 언급된 쪽을 남김).
+            content = src.read_bytes()
+            if content in seen_contents:
+                continue
+            seen_contents.add(content)
 
             dest_dir = artifacts_root / str(message_id)
             dest_dir.mkdir(parents=True, exist_ok=True)
