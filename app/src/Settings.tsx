@@ -7,6 +7,7 @@ import type {
   CliStatus, Rule, Settings as SettingsType, StorageInfo, WorkspaceInfo, WorkspaceUpdateStatus,
 } from "./api";
 import { Emoji } from "./emoji";
+import { applyFonts, BODY_FONTS, HEADING_FONTS } from "./fonts";
 
 function badge(installed: boolean, authed: boolean | null): React.ReactNode {
   if (!installed) return <Emoji name="fail" label="안 됨" />;
@@ -229,6 +230,44 @@ export default function Settings({ onClose }: { onClose: () => void }) {
             </button>
           </div>
         </div>
+      </section>
+
+      <section className="card">
+        <h3>글꼴</h3>
+        {settings && (
+          <div className="stack">
+            <div className="field-row">
+              <span className="field-label" style={{ minWidth: 150 }}>본문 글꼴</span>
+              <select value={settings.font_body}
+                      onChange={e => {
+                        applyFonts(e.target.value, settings.font_heading);
+                        save({ font_body: e.target.value });
+                      }}>
+                {BODY_FONTS.map(f => <option key={f.id} value={f.id}>{f.label}</option>)}
+              </select>
+            </div>
+            <div className="field-row">
+              <span className="field-label" style={{ minWidth: 150 }}>제목·원고 글꼴</span>
+              <select value={settings.font_heading}
+                      onChange={e => {
+                        applyFonts(settings.font_body, e.target.value);
+                        save({ font_heading: e.target.value });
+                      }}>
+                {HEADING_FONTS.map(f => <option key={f.id} value={f.id}>{f.label}</option>)}
+              </select>
+            </div>
+            <div className="font-preview">
+              <h2>정죄함이 없는 자유</h2>
+              <blockquote>그러므로 이제 그리스도 예수 안에 있는 자에게는 결코 정죄함이 없나니 (롬 8:1)</blockquote>
+              <p>죄책감에 눌린 우리의 일상 한가운데로, 복음은 먼저 찾아와 말을 겁니다.
+                오늘 본문은 그 첫 문장부터 우리를 판결의 자리에서 자유의 자리로 옮겨 놓습니다.</p>
+            </div>
+            <div className="hint">
+              모든 글꼴은 앱에 함께 담겨 있어 인터넷 없이도 동작합니다. 모두 SIL 오픈 폰트
+              라이선스(OFL 1.1) 등 무료 라이선스 글꼴입니다.
+            </div>
+          </div>
+        )}
       </section>
 
       <section className="card">

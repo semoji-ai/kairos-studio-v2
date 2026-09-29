@@ -1,0 +1,15 @@
+/* 마루 부리 — 네이버 공식 웹폰트(hangeul.pstatic.net)에서 받은 원본. 라이선스: assets/fonts/maruburi/LICENSE.txt */
+@font-face {
+  font-family: 'MaruBuri';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('../assets/fonts/maruburi/MaruBuri-Regular.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'MaruBuri';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('../assets/fonts/maruburi/MaruBuri-Bold.woff2') format('woff2');
+}
