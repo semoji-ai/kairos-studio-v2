@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 
 DEFAULTS = {
@@ -27,6 +28,46 @@ _ALLOWED = {
     "font_heading": {"system", "maruburi", "gowun-batang",
                      "noto-serif-kr", "nanum-myeongjo", "hahmlet"},
 }
+
+
+OUTPUT_DIRNAME = "KS_output"
+WORKSPACE_DIRNAME = "publish-agent"
+
+
+def _windows_documents() -> str | None:
+    """윈도우 '문서' 폴더의 실제 위치 — 원드라이브로 옮겨진 경우도 따라간다."""
+    try:
+        import winreg  # type: ignore
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                            r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders") as key:
+            value, _ = winreg.QueryValueEx(key, "Personal")
+        return os.path.expandvars(value)
+    except (ImportError, OSError):
+        return None
+
+
+def documents_dir() -> Path:
+    """기본 폴더를 둘 곳: 문서 폴더, 없으면 홈 폴더 (맥·윈도우 공통)."""
+    override = os.environ.get("KAIROS_DOCUMENTS_DIR")
+    if override:
+        return Path(override).expanduser()
+    if sys.platform == "win32":
+        found = _windows_documents()
+        if found and Path(found).is_dir():
+            return Path(found)
+    documents = Path.home() / "Documents"
+    return documents if documents.is_dir() else Path.home()
+
+
+def _folder_defaults(raw: dict) -> dict:
+    """설정 파일에 값이 아예 없을 때만 채운다 — 목사님이 일부러 비운 값은 그대로 둔다."""
+    out = {}
+    base = documents_dir()
+    if "output_dir" not in raw:
+        out["output_dir"] = str(base / OUTPUT_DIRNAME)
+    if "workspace_dir" not in raw and (base / WORKSPACE_DIRNAME).is_dir():
+        out["workspace_dir"] = str(base / WORKSPACE_DIRNAME)
+    return out
 
 
 def config_path() -> Path:
@@ -81,8 +122,10 @@ def restore_raw(raw: dict) -> None:
 
 
 def load() -> dict:
+    raw = _load_raw()
     merged = dict(DEFAULTS)
-    merged.update(_load_raw())
+    merged.update(_folder_defaults(raw))
+    merged.update(raw)
     # 글꼴은 목록에서 빠질 수 있으니(버전 변경·수동 편집) 모르는 값은 기본값으로
     for key in ("font_body", "font_heading"):
         if merged[key] not in _ALLOWED[key]:
@@ -104,5 +147,6 @@ def save(patch: dict) -> dict:
     p.write_text(json.dumps(raw, ensure_ascii=False, indent=2),
                  encoding="utf-8")
     merged = dict(DEFAULTS)
+    merged.update(_folder_defaults(raw))
     merged.update(raw)
     return merged

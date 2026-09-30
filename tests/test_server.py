@@ -766,9 +766,9 @@ def test_setup_install_workspace_extracts_zip(srv, tmp_path, monkeypatch):
     with zipfile.ZipFile(bundle / "publish_agent.zip", "w") as zf:
         zf.writestr("skills/publish-write/SKILL.md", "# skill")
     monkeypatch.setenv("KAIROS_BUNDLE_DIR", str(bundle))
-    docs = tmp_path / "home" / "Documents"
+    docs = tmp_path / "onedrive-docs"
     docs.mkdir(parents=True)
-    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    monkeypatch.setenv("KAIROS_DOCUMENTS_DIR", str(docs))  # 설정의 문서 폴더 규칙을 따른다
     resp = json.load(_req(url, "/setup/install-workspace", {}))
     assert resp["workspace_dir"] == str(docs / "publish-agent")
     assert resp["skills"] >= 1

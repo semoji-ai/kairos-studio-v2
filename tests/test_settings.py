@@ -94,3 +94,56 @@ def test_font_invalid_stored_value_falls_back(cfg_dir):
     s = settings.load()
     assert s["font_body"] == "system"
     assert s["font_heading"] == "maruburi"
+
+
+# ── 폴더 기본값 ─────────────────────────────────────────────
+
+
+def _home(tmp_path, monkeypatch, documents=True):
+    home = tmp_path / "home"
+    (home / "Documents").mkdir(parents=True) if documents else home.mkdir(parents=True)
+    monkeypatch.setattr(settings.Path, "home", lambda: home)
+    monkeypatch.delenv("KAIROS_DOCUMENTS_DIR", raising=False)
+    monkeypatch.setattr(settings.sys, "platform", "darwin")
+    return home
+
+
+def test_output_dir_defaults_to_documents_ks_output(tmp_path, monkeypatch):
+    home = _home(tmp_path, monkeypatch)
+    assert settings.load()["output_dir"] == str(home / "Documents" / "KS_output")
+
+
+def test_output_dir_falls_back_to_home_without_documents(tmp_path, monkeypatch):
+    home = _home(tmp_path, monkeypatch, documents=False)
+    assert settings.load()["output_dir"] == str(home / "KS_output")
+
+
+def test_workspace_defaults_only_when_installed(tmp_path, monkeypatch):
+    home = _home(tmp_path, monkeypatch)
+    assert settings.load()["workspace_dir"] is None
+    (home / "Documents" / "publish-agent").mkdir()
+    assert settings.load()["workspace_dir"] == str(home / "Documents" / "publish-agent")
+
+
+def test_explicitly_cleared_folders_stay_cleared(tmp_path, monkeypatch, cfg_dir):
+    home = _home(tmp_path, monkeypatch)
+    (home / "Documents" / "publish-agent").mkdir()
+    settings.save({"output_dir": None, "workspace_dir": None})
+    s = settings.load()
+    assert s["output_dir"] is None and s["workspace_dir"] is None
+
+
+def test_windows_documents_folder_from_registry(tmp_path, monkeypatch):
+    home = _home(tmp_path, monkeypatch)
+    onedrive = tmp_path / "OneDrive" / "문서"
+    onedrive.mkdir(parents=True)
+    monkeypatch.setattr(settings.sys, "platform", "win32")
+    monkeypatch.setattr(settings, "_windows_documents", lambda: str(onedrive))
+    assert settings.load()["output_dir"] == str(onedrive / "KS_output")
+
+
+def test_documents_dir_env_override(tmp_path, monkeypatch):
+    target = tmp_path / "docs"
+    target.mkdir()
+    monkeypatch.setenv("KAIROS_DOCUMENTS_DIR", str(target))
+    assert settings.load()["output_dir"] == str(target / "KS_output")
