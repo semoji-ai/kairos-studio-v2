@@ -80,7 +80,7 @@ export default function Settings({ onClose }: { onClose: () => void }) {
       if (res.error) {
         setDistillError(res.error);
       } else {
-        setDistillResult(`규칙 ${res.added.length}개 추가`);
+        setDistillResult(`규칙 ${res.added.length}개 추가 · 후보 ${res.candidates?.length ?? 0}개`);
       }
       refreshRules();
     } catch (e) {
@@ -327,13 +327,14 @@ export default function Settings({ onClose }: { onClose: () => void }) {
           {distillResult && <span className="status-ok">{distillResult}</span>}
           {distillError && <span className="status-bad">{distillError}</span>}
         </div>
+        <div className="hint" style={{ marginTop: 6 }}>'후보'는 대화에서 뽑힌 규칙입니다. 켜야 답변에 반영됩니다.</div>
         <ul className="rule-list">
           {rules.map(r => (
             <li key={r.id}>
               <label className="check">
                 <input type="checkbox" checked={!!r.active}
                        onChange={e => toggleRule(r.id, e.target.checked)} />
-                {r.rule}
+                {r.pending && <span className="rule-badge">후보</span>}{r.rule}
               </label>
             </li>
           ))}

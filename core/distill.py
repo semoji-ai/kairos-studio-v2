@@ -8,17 +8,22 @@ MAX_FEEDBACK_ITEMS = 30
 SNIPPET_LEN = 300
 
 _PROMPT_TMPL = """\
-다음은 사용자가 이전 답변에 남긴 교정/비선호 피드백 목록이다.
-여기서 사용자의 명시적 선호를 규칙 문장으로 추출하라.
+다음은 사용자가 이전 답변에 남긴 교정/비선호 피드백과, 대화 중 사용자가 직접 밝힌 지시다.
+여기서 사용자의 명시적이고 지속적인 선호를 규칙 문장으로 추출하라.
 기존 규칙과 중복되지 않는 것만 뽑는다. 각 규칙은 한 문장, 최대 5개.
+이번 원고나 이번 대화에만 해당하는 일회성 요청은 규칙으로 만들지 않는다.
 반드시 JSON 배열만 출력하라. 다른 설명 텍스트를 붙이지 마라.
-형식: [{{"rule": "...", "source_ids": [...]}}]
+형식: [{{"rule": "...", "source_ids": [...], "from": "feedback" 또는 "conversation"}}]
+대화 지시에서 나온 규칙은 from을 "conversation"으로, source_ids에 "m{{id}}"를 넣는다.
 
 기존 활성 규칙:
 {existing_rules}
 
 피드백 목록:
 {feedback_items}
+
+대화 지시:
+{directive_items}
 """
 
 
@@ -69,7 +74,8 @@ def _collect_context(store) -> list[dict]:
     return items
 
 
-def _build_prompt(items: list[dict], existing_rules: list[dict]) -> str:
+def _build_prompt(items: list[dict], existing_rules: list[dict],
+                  directives: list[dict]) -> str:
     existing_lines = "\n".join(f"- {r['rule']}" for r in existing_rules) or "(없음)"
     feedback_lines = []
     for it in items:
@@ -79,7 +85,9 @@ def _build_prompt(items: list[dict], existing_rules: list[dict]) -> str:
         )
     return _PROMPT_TMPL.format(
         existing_rules=existing_lines,
-        feedback_items="\n".join(feedback_lines),
+        feedback_items="\n".join(feedback_lines) or "(없음)",
+        directive_items="\n".join(f"- [id=m{d['id']}] {d['text']!r}" for d in directives)
+        or "(없음)",
     )
 
 
@@ -97,11 +105,12 @@ def _extract_json_array(text: str):
 
 def distill(store, chat_fn: Callable[..., Iterator[dict]], cfg: dict | None = None) -> dict:
     items = _collect_context(store)
-    if not items:
-        return {"added": [], "skipped": "no new feedback"}
+    directives = store.directive_messages()
+    if not items and not directives:
+        return {"added": [], "candidates": [], "skipped": "no new feedback"}
 
     existing_rules = store.list_rules(active_only=True)
-    prompt = _build_prompt(items, existing_rules)
+    prompt = _build_prompt(items, existing_rules, directives)
 
     final_text = ""
     for event in chat_fn(prompt, session_ref=None, cfg=cfg):
@@ -109,24 +118,29 @@ def distill(store, chat_fn: Callable[..., Iterator[dict]], cfg: dict | None = No
             final_text = event.get("text", "") or ""
         elif event.get("type") == "error":
             msg = event.get("error") or event.get("message") or "unknown error"
-            return {"added": [], "error": f"provider: {msg}"}
+            return {"added": [], "candidates": [], "error": f"provider: {msg}"}
 
     parsed = _extract_json_array(final_text)
     if not isinstance(parsed, list):
-        return {"added": [], "error": "parse"}
+        return {"added": [], "candidates": [], "error": "parse"}
 
-    added = []
+    rules = []
     for entry in parsed:
         if not isinstance(entry, dict):
-            return {"added": [], "error": "parse"}
+            return {"added": [], "candidates": [], "error": "parse"}
         rule = entry.get("rule")
         source_ids = entry.get("source_ids")
         if not isinstance(rule, str) or not rule.strip() or not isinstance(source_ids, list):
-            return {"added": [], "error": "parse"}
-        added.append((rule, source_ids))
+            return {"added": [], "candidates": [], "error": "parse"}
+        # 대화 지시에서 나온 규칙은 목사님이 켜기 전까지 후보로만 둔다
+        rules.append((rule, source_ids, entry.get("from") == "conversation"))
 
-    for rule, source_ids in added:
-        store.add_rule(rule, source_ids)
-    store.mark_distilled(max(it["id"] for it in items))
+    for rule, source_ids, pending in rules:
+        store.add_rule(rule, source_ids, pending=pending)
+    if items:
+        store.mark_distilled(max(it["id"] for it in items))
+    if directives:
+        store.mark_directives_distilled(max(d["id"] for d in directives))
 
-    return {"added": [r for r, _ in added]}
+    return {"added": [r for r, _, p in rules if not p],
+            "candidates": [r for r, _, p in rules if p]}

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import threading
 from pathlib import Path
@@ -64,6 +65,9 @@ CREATE TABLE IF NOT EXISTS document_revisions(
 _FEEDBACK_KINDS = {"up", "down", "correction"}
 
 
+DIRECTIVE_RE = re.compile(r"(앞으로|항상|늘 |매번|계속|기억해|원칙|하지 ?마|말아|지 ?말고)")
+
+
 class Store:
     def __init__(self, db_path: str | Path):
         self._path = str(db_path)
@@ -71,7 +75,16 @@ class Store:
         self._local = threading.local()
         with self._conn() as c:
             c.executescript(_SCHEMA)
+            self._migrate(c)
         self._backfill_fts()
+
+    def _migrate(self, c) -> None:
+        cols = {r["name"] for r in c.execute("PRAGMA table_info(learned_rules)")}
+        if "pending" not in cols:
+            c.execute("ALTER TABLE learned_rules ADD COLUMN pending INTEGER NOT NULL DEFAULT 0")
+        cols = {r["name"] for r in c.execute("PRAGMA table_info(distill_state)")}
+        if "last_message_id" not in cols:
+            c.execute("ALTER TABLE distill_state ADD COLUMN last_message_id INTEGER NOT NULL DEFAULT 0")
 
     def _backfill_fts(self) -> None:
         from core.recall import bigrams  # local import: avoid import cycle at module load
@@ -293,33 +306,65 @@ class Store:
             out.append(d)
         return out
 
-    def add_rule(self, rule: str, source_ids: list[int]) -> int:
+    def add_rule(self, rule: str, source_ids: list, pending: bool = False) -> int:
         with self._conn() as c:
             cur = c.execute(
-                "INSERT INTO learned_rules(rule, source) VALUES (?,?)",
-                (rule, json.dumps(source_ids)),
+                "INSERT INTO learned_rules(rule, source, active, pending) VALUES (?,?,?,?)",
+                (rule, json.dumps(source_ids), 0 if pending else 1, 1 if pending else 0),
             )
             return cur.lastrowid
 
     def list_rules(self, active_only: bool = True) -> list[dict]:
-        sql = "SELECT id, rule, source, active, created_at FROM learned_rules"
+        sql = "SELECT id, rule, source, active, pending, created_at FROM learned_rules"
         if active_only:
             sql += " WHERE active=1"
         sql += " ORDER BY id DESC"
-        rows = self._conn().execute(sql).fetchall()
         out = []
-        for r in rows:
+        for r in self._conn().execute(sql).fetchall():
             d = dict(r)
             d["source_ids"] = json.loads(d.pop("source")) if d.get("source") else []
             d["active"] = bool(d["active"])
+            d["pending"] = bool(d["pending"])
             out.append(d)
         return out
 
     def set_rule_active(self, rule_id: int, active: bool) -> None:
         with self._conn() as c:
+            if active:
+                c.execute("UPDATE learned_rules SET active=1, pending=0 WHERE id=?", (rule_id,))
+            else:
+                c.execute("UPDATE learned_rules SET active=0 WHERE id=?", (rule_id,))
+
+    def _last_message_id(self) -> int:
+        row = self._conn().execute(
+            "SELECT last_message_id FROM distill_state WHERE id=1").fetchone()
+        return row["last_message_id"] if row else 0
+
+    def directive_messages(self, limit: int = 20) -> list[dict]:
+        """마지막 증류 이후 목사님 메시지 중 지속적 선호를 밝힌 것(규칙 후보 재료)."""
+        rows = self._conn().execute(
+            "SELECT id, content_json FROM messages WHERE role='user' AND id > ? ORDER BY id",
+            (self._last_message_id(),),
+        ).fetchall()
+        out = []
+        for r in rows:
+            text = " ".join(p.get("text", "") for p in json.loads(r["content_json"])
+                            if p.get("type") == "text")
+            if DIRECTIVE_RE.search(text):
+                out.append({"id": r["id"], "text": text[:300]})
+                if len(out) >= limit:
+                    break
+        return out
+
+    def count_undistilled_directives(self) -> int:
+        return len(self.directive_messages(limit=1000))
+
+    def mark_directives_distilled(self, up_to_message_id: int) -> None:
+        with self._conn() as c:
             c.execute(
-                "UPDATE learned_rules SET active=? WHERE id=?",
-                (1 if active else 0, rule_id),
+                "INSERT INTO distill_state(id, last_message_id) VALUES (1, ?)"
+                " ON CONFLICT(id) DO UPDATE SET last_message_id=excluded.last_message_id",
+                (up_to_message_id,),
             )
 
     def _last_feedback_id(self) -> int:

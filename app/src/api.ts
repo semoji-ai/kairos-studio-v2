@@ -150,7 +150,7 @@ export async function updateWorkspace(): Promise<{ updated: string[]; backup_dir
   return r.json();
 }
 
-export type Rule = { id: number; rule: string; active: boolean; created_at: string };
+export type Rule = { id: number; rule: string; active: boolean; pending: boolean; created_at: string };
 
 export async function getRules(): Promise<{ rules: Rule[]; undistilled: number }> {
   return (await fetch("/rules", { headers: HDRS })).json();
@@ -158,7 +158,7 @@ export async function getRules(): Promise<{ rules: Rule[]; undistilled: number }
 export async function setRuleActive(id: number, active: boolean): Promise<void> {
   await fetch("/rules", { method: "POST", headers: HDRS, body: JSON.stringify({ id, active }) });
 }
-export async function runDistill(): Promise<{ added: string[]; error?: string; skipped?: string }> {
+export async function runDistill(): Promise<{ added: string[]; candidates?: string[]; error?: string; skipped?: string }> {
   const r = await fetch("/distill", { method: "POST", headers: HDRS });
   const j = await r.json();
   if (!r.ok) throw new Error(j.error ?? `HTTP ${r.status}`);
@@ -315,4 +315,50 @@ export async function chat(
       if (line) onEvent(JSON.parse(line.slice(6)) as ChatEvent);
     }
   }
+}
+
+
+export type LearningItem = {
+  name: string; title: string; chars: number; preview: string;
+  status: "ok" | "empty" | "duplicate" | "error"; reason: string; duplicate_of: string;
+};
+export type LearningJob = {
+  id: string; status: "queued" | "absorbing" | "profiling" | "completed" | "failed";
+  stage: string; batch_id: string; source_ids: string[]; primary: number; reference: number;
+  log: string[]; error: string | null; created_at: string; updated_at: string;
+};
+export type LearningStatus = {
+  ready: boolean; reason: "no_workspace" | "no_config" | null;
+  workspace_dir: string | null; jobs: LearningJob[];
+};
+
+export async function learningStatus(): Promise<LearningStatus> {
+  const r = await fetch("/learning/status", { headers: HDRS });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+export async function uploadManuscripts(files: File[]): Promise<{ upload_id: string; items: LearningItem[] }> {
+  const form = new FormData();
+  files.forEach(f => form.append("files", f, f.name));
+  const r = await fetch("/learning/uploads", {
+    method: "POST", headers: { Authorization: HDRS.Authorization }, body: form });
+  if (!r.ok) throw new Error((await r.json()).error ?? `HTTP ${r.status}`);
+  return r.json();
+}
+export async function startLearning(
+  uploadId: string,
+  items: { name: string; title: string; type: "primary" | "reference"; include: boolean }[],
+): Promise<LearningJob> {
+  const r = await fetch("/learning/jobs", {
+    method: "POST", headers: HDRS, body: JSON.stringify({ upload_id: uploadId, items }) });
+  if (!r.ok) throw new Error((await r.json()).error ?? `HTTP ${r.status}`);
+  return r.json();
+}
+export async function retryLearning(id: string): Promise<LearningJob> {
+  const r = await fetch(`/learning/jobs/${id}/retry`, { method: "POST", headers: HDRS });
+  if (!r.ok) throw new Error((await r.json()).error ?? `HTTP ${r.status}`);
+  return r.json();
+}
+export async function discardUpload(id: string): Promise<void> {
+  await fetch(`/learning/uploads/${id}`, { method: "DELETE", headers: HDRS });
 }

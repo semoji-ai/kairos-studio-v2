@@ -877,3 +877,83 @@ def test_artifact_with_korean_filename_is_served(srv, monkeypatch, tmp_path):
     resp = _req(url, f"/artifacts/{urllib.parse.quote(artifact_path)}", token=None)
     assert resp.status == 200
     assert resp.read() == doc.read_bytes()
+
+
+def _multi(url, path, files, token=TOKEN):
+    boundary = "----kairos-learn"
+    chunks = []
+    for name, data in files:
+        chunks.append(
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"files\"; "
+            f"filename=\"{name}\"\r\nContent-Type: application/octet-stream\r\n\r\n".encode()
+            + data + b"\r\n")
+    body = b"".join(chunks) + f"--{boundary}--\r\n".encode()
+    r = urllib.request.Request(url + path, data=body, method="POST")
+    r.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+    if token:
+        r.add_header("Authorization", f"Bearer {token}")
+    return urllib.request.urlopen(r)
+
+
+def test_learning_flow_upload_commit_job(srv, tmp_path, monkeypatch):
+    url, _ = srv
+    from core import settings
+    monkeypatch.setenv("KAIROS_CONFIG_DIR", str(tmp_path / "cfg"))
+    ws = tmp_path / "ws"
+    (ws / "raw" / "entries").mkdir(parents=True)
+    (ws / "config.yaml").write_text("author:\n  name: \"김목사\"\n", encoding="utf-8")
+    settings.save({"workspace_dir": str(ws)})
+
+    def fake_chat(prompt, session_ref=None, cfg=None):
+        yield {"type": "done", "text": "ok"}
+    monkeypatch.setattr("core.server._learning_chat", lambda: fake_chat)
+
+    st = json.load(_req(url, "/learning/status"))
+    assert st["ready"] is True and st["jobs"] == []
+    up = json.load(_multi(url, "/learning/uploads",
+                          [("설교.md", ("# 주일 설교\n\n" + "은혜의 말씀 " * 60).encode())]))
+    item = up["items"][0]
+    assert item["status"] == "ok"
+    job = json.load(_req(url, "/learning/jobs", {
+        "upload_id": up["upload_id"],
+        "items": [{"name": item["name"], "title": "설교", "type": "primary", "include": True}]}))
+    assert job["source_ids"] and job["batch_id"].startswith("batch_")
+    assert list((ws / "raw" / "entries").glob("*.md"))
+
+
+def test_learning_requires_token_and_reports_missing_config(srv, tmp_path, monkeypatch):
+    url, _ = srv
+    from core import settings
+    monkeypatch.setenv("KAIROS_CONFIG_DIR", str(tmp_path / "cfg"))
+    with pytest.raises(urllib.error.HTTPError) as e:
+        _req(url, "/learning/status", token=None)
+    assert e.value.code == 401
+    bare = tmp_path / "bare"
+    bare.mkdir()
+    settings.save({"workspace_dir": str(bare)})
+    st = json.load(_req(url, "/learning/status"))
+    assert st["ready"] is False and st["reason"] == "no_config"
+    with pytest.raises(urllib.error.HTTPError) as e:
+        _multi(url, "/learning/uploads", [("a.md", b"x")])
+    assert e.value.code == 400
+
+
+def test_learning_rejects_second_job_while_running_and_survives_bad_upload(srv, tmp_path, monkeypatch):
+    url, _ = srv
+    from core import settings
+    from core.learning import LearningManager
+    monkeypatch.setenv("KAIROS_CONFIG_DIR", str(tmp_path / "cfg"))
+    ws = tmp_path / "ws"
+    (ws / "raw" / "entries").mkdir(parents=True)
+    (ws / "config.yaml").write_text("author:\n  name: 김목사\n", encoding="utf-8")
+    settings.save({"workspace_dir": str(ws)})
+    monkeypatch.setattr(LearningManager, "has_running", lambda self, w: True)
+    up = json.load(_multi(url, "/learning/uploads",
+                          [("x.docx", b"not a zip"),
+                           ("설교.md", ("# 설교\n\n" + "은혜의 말씀 " * 60).encode())]))
+    assert [i["status"] for i in up["items"]] == ["error", "ok"]
+    with pytest.raises(urllib.error.HTTPError) as e:
+        _req(url, "/learning/jobs", {"upload_id": up["upload_id"], "items": [
+            {"name": "설교.md", "title": "설교", "type": "primary", "include": True}]})
+    assert e.value.code == 409
+    assert not list((ws / "raw" / "entries").glob("*.md"))
