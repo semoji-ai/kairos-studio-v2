@@ -118,6 +118,10 @@ def chat(prompt: str, session_ref: str | None = None,
     except OSError as exc:
         yield {"type": "error", "error": f"spawn failed: {exc}"}
         return
+    # 백그라운드 작업(원고 학습)이 앱 종료 뒤 남은 프로세스를 정리할 수 있게 pid를 알린다
+    on_spawn = (cfg or {}).get("on_spawn")
+    if callable(on_spawn):
+        on_spawn(proc.pid)
 
     final_text, session_id, model, got_result = "", None, None, False
     assert proc.stdout is not None

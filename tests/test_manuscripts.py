@@ -143,3 +143,57 @@ def test_discard_upload(tmp_path):
     assert not (ws / "raw" / "sources" / "_staging" / up["upload_id"]).exists()
     with pytest.raises(ValueError):
         ms.discard_upload(ws, "../../etc")
+
+
+# ── 최종 리뷰 지적 재현 ─────────────────────────────────────
+
+
+def test_corrupt_document_marks_error_without_losing_batch(tmp_path):
+    ws = _ws(tmp_path)
+    res = ms.stage_upload(ws, [("망가진.docx", b"not a zip"),
+                               ("정상.md", ("# 설교\n\n" + LONG).encode())])
+    st = {i["name"]: i["status"] for i in res["items"]}
+    assert st == {"망가진.docx": "error", "정상.md": "ok"}
+
+
+def test_same_day_same_filename_keeps_both_originals(tmp_path):
+    ws = _ws(tmp_path)
+    for body in ["첫째 " + LONG, "둘째 " + LONG]:
+        up = ms.stage_upload(ws, [("설교.md", ("# 설교\n\n" + body).encode())])
+        ms.commit_upload(ws, up["upload_id"], [
+            {"name": "설교.md", "title": "설교", "type": "primary", "include": True}],
+            today=date(2026, 9, 30))
+    entries = sorted((ws / "raw" / "entries").iterdir())
+    paths = [_front(p)["source_path"] for p in entries]
+    assert len(set(paths)) == 2
+    assert "첫째" in (ws / paths[0]).read_text(encoding="utf-8")
+    assert "둘째" in (ws / paths[1]).read_text(encoding="utf-8")
+
+
+def test_commit_creates_entries_dir_and_rolls_back_on_failure(tmp_path, monkeypatch):
+    ws = _ws(tmp_path)
+    (ws / "raw" / "entries").rmdir()
+    up = ms.stage_upload(ws, [("a.md", ("# A\n\n" + LONG).encode())])
+    choice = [{"name": "a.md", "title": "A", "type": "primary", "include": True}]
+
+    def boom(*a, **k):
+        raise OSError("disk full")
+    monkeypatch.setattr(ms.shutil, "move", boom)
+    with pytest.raises(OSError):
+        ms.commit_upload(ws, up["upload_id"], choice, today=date(2026, 9, 30))
+    assert not list((ws / "raw" / "entries").glob("*.md"))  # 반쯤 쓴 기록 없음
+    monkeypatch.undo()
+    res = ms.commit_upload(ws, up["upload_id"], choice, today=date(2026, 9, 30))
+    assert res["source_ids"] == ["src_20260930_001"]
+
+
+def test_pdf_page_markers_are_not_titles_or_split_points(tmp_path):
+    ws = _ws(tmp_path)
+    pages = "\n\n".join(f"## 원본 {n}쪽\n" + "\n".join(f"{n}쪽 {j}번째 문장입니다." for j in range(40))
+                        for n in range(1, 16))  # 약 630줄, 쪽 표시 15개
+    up = ms.stage_upload(ws, [("강해.md", pages.encode())])
+    assert up["items"][0]["title"] != "원본 1쪽"
+    res = ms.commit_upload(ws, up["upload_id"], [
+        {"name": "강해.md", "title": "강해", "type": "primary", "include": True}],
+        today=date(2026, 9, 30))
+    assert 2 <= len(res["source_ids"]) <= 3  # 쪽마다 쪼개지지 않음

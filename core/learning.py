@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import signal
+import subprocess
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -16,6 +18,20 @@ _RUNNING = {"absorbing", "profiling", "queued"}
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _kill(pid) -> None:
+    """앱이 꺼진 뒤에도 남아 작업 폴더를 고치던 claude 프로세스를 끝낸다."""
+    if not isinstance(pid, int) or pid <= 0:
+        return
+    try:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        else:
+            os.kill(pid, signal.SIGTERM)
+    except (OSError, subprocess.SubprocessError):
+        pass
 
 
 def absorb_prompt(batch_id: str, source_ids: list[str]) -> str:
@@ -63,6 +79,7 @@ class LearningManager:
             return None
         job = json.loads(path.read_text(encoding="utf-8"))
         if job.get("status") in _RUNNING and job.get("pid") != os.getpid():
+            _kill(job.get("child_pid"))
             job = self._write(job_id, status="failed", stage="중단됨",
                               error="앱이 종료되어 학습이 중단되었습니다. 다시 시도해 주세요.")
         return job
@@ -70,6 +87,11 @@ class LearningManager:
     def list(self) -> list[dict]:
         jobs = [self.get(p.parent.name) for p in self.root.glob("*/status.json")]
         return sorted([j for j in jobs if j], key=lambda j: j.get("created_at", ""), reverse=True)
+
+    def has_running(self, workspace: str) -> bool:
+        """같은 작업 폴더에서 흡수가 진행 중이면 True — 두 흡수가 위키를 동시에 고치지 않게."""
+        return any(j.get("workspace") == workspace and j.get("status") in _RUNNING
+                   for j in self.list())
 
     def create(self, workspace: str, commit: dict, cfg: dict) -> dict:
         job_id = uuid.uuid4().hex[:12]
@@ -88,8 +110,10 @@ class LearningManager:
             raise ValueError("작업을 찾을 수 없습니다")
         if job["status"] != "failed":
             raise ValueError("실패한 작업만 다시 시도할 수 있습니다")
+        if self.has_running(job.get("workspace", "")):
+            raise ValueError("같은 작업 폴더에서 학습이 진행 중입니다")
         self._write(job_id, status="queued", stage="다시 시도 대기 중", error=None,
-                    pid=os.getpid())
+                    pid=os.getpid(), child_pid=None)
         self._dispatch(job_id, cfg)
         return self.get(job_id)
 
@@ -117,10 +141,17 @@ class LearningManager:
         return None
 
     def _run(self, job_id: str, cfg: dict):
+        try:
+            self._run_steps(job_id, cfg)
+        except Exception as exc:  # 스레드가 죽어 '흡수 중'에 영원히 멈추지 않게
+            self._write(job_id, status="failed", stage="실패", error=f"학습 중 오류: {exc}")
+
+    def _run_steps(self, job_id: str, cfg: dict):
         job = self.get(job_id)
         run_cfg = dict(cfg)
         run_cfg["claude_permission_mode"] = "acceptEdits"
         run_cfg["workspace_dir"] = job["workspace"]
+        run_cfg["on_spawn"] = lambda pid: self._write(job_id, child_pid=pid)
         self._write(job_id, status="absorbing", stage="위키에 흡수하는 중", pid=os.getpid())
         err = self._step(job_id, absorb_prompt(job["batch_id"], job["source_ids"]), run_cfg)
         if err is None and job.get("primary"):

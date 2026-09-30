@@ -62,3 +62,46 @@ def test_interrupted_job_from_previous_process_becomes_failed(tmp_path):
     got = m.get(job["id"])
     assert got["status"] == "failed" and "중단" in got["error"]
     assert [j["id"] for j in m.list()] == [job["id"]]
+
+
+def test_unexpected_exception_marks_failed_and_retryable(tmp_path):
+    def chat(prompt, session_ref=None, cfg=None):
+        raise UnicodeError("bad bytes")
+        yield  # pragma: no cover
+    m = LearningManager(tmp_path, chat_fn=chat, run_async=False)
+    job = m.create("/ws", COMMIT, {})
+    got = m.get(job["id"])
+    assert got["status"] == "failed" and "bad bytes" in got["error"]
+
+
+def test_has_running_blocks_second_job_same_workspace(tmp_path):
+    m = LearningManager(tmp_path, chat_fn=_chat(), run_async=False)
+    job = m.create("/ws", COMMIT, {})
+    assert m.has_running("/ws") is False
+    m._write(job["id"], status="absorbing")
+    assert m.has_running("/ws") is True
+    assert m.has_running("/other") is False
+
+
+def test_interrupted_job_kills_orphan_claude_process(tmp_path):
+    import subprocess
+    import sys
+    orphan = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        m = LearningManager(tmp_path, chat_fn=_chat(), run_async=False)
+        job = m.create("/ws", COMMIT, {})
+        m._write(job["id"], status="absorbing", pid=-1, child_pid=orphan.pid)
+        assert m.get(job["id"])["status"] == "failed"
+        assert orphan.wait(timeout=5) is not None
+    finally:
+        if orphan.poll() is None:
+            orphan.kill()
+
+
+def test_job_records_spawned_claude_pid(tmp_path):
+    def chat(prompt, session_ref=None, cfg=None):
+        cfg["on_spawn"](4242)
+        yield {"type": "done", "text": "ok"}
+    m = LearningManager(tmp_path, chat_fn=chat, run_async=False)
+    job = m.create("/ws", COMMIT, {})
+    assert m.get(job["id"])["child_pid"] == 4242

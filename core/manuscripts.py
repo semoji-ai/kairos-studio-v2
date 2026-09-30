@@ -20,6 +20,9 @@ MIN_CHARS = 200
 SPLIT_LINES = 500
 _UPLOAD_ID = re.compile(r"[0-9a-f]{12}")
 _SERMON_HINT = re.compile(r"(설교|강해|주일|수요|새벽|금요|예배)")
+# PDF 변환이 쪽마다 넣는 표시 — 제목도, 분할 지점도 아니다
+_PAGE_MARK = re.compile(r"^#+\s*원본 \d+쪽\s*$")
+MIN_PART_LINES = 200
 
 
 def normalize_body(text: str) -> str:
@@ -64,7 +67,7 @@ def _safe_name(name: str) -> str:
 def _title(text: str, fallback: str) -> str:
     for line in text.splitlines():
         line = line.strip()
-        if line:
+        if line and not _PAGE_MARK.match(line):
             return re.sub(r"^#+\s*", "", line)[:120]
     return fallback
 
@@ -115,8 +118,8 @@ def stage_upload(workspace: Path, files: list[tuple[str, bytes]]) -> dict:
         (stage / name).write_bytes(data)
         try:
             text, _ = extract_text(stage / name, stage / f"{name}.work")
-        except (RuntimeError, ValueError, OSError) as exc:
-            item.update(status="error", reason=str(exc))
+        except Exception as exc:  # 망가진 파일 하나가 업로드 전체를 망치지 않게
+            item.update(status="error", reason=f"변환 실패: {exc}")
             continue
         body = normalize_body(text)
         (stage / f"{name}.md").write_text(body + "\n", encoding="utf-8")
@@ -148,11 +151,12 @@ def _split(body: str) -> list[tuple[str, str]]:
     parts: list[tuple[str, list[str]]] = []
     cur_title, cur = "", []
     for line in lines:
-        at_heading = line.startswith("#") and len(cur) >= 50
+        heading = line.startswith("#") and not _PAGE_MARK.match(line)
+        at_heading = heading and len(cur) >= MIN_PART_LINES
         if at_heading or len(cur) >= SPLIT_LINES:
             parts.append((cur_title, cur))
             cur_title, cur = "", []
-        if line.startswith("#") and not cur:
+        if heading and not cur:
             cur_title = re.sub(r"^#+\s*", "", line).strip()[:80]
         cur.append(line)
     if cur:
@@ -188,7 +192,9 @@ def commit_upload(workspace: Path, upload_id: str, choices: list[dict],
     sources = workspace / "raw" / "sources" / day
     sources.mkdir(parents=True, exist_ok=True)
     n = _next_number(workspace, day)
-    written, counts = [], {"primary": 0, "reference": 0}
+    entries.mkdir(parents=True, exist_ok=True)
+    # 1) 쓸 내용을 모두 준비 2) 기록 쓰기 3) 원본 옮기기 — 실패하면 되돌려 반쯤 쓴 상태를 남기지 않는다
+    planned, moves, counts, taken = [], [], {"primary": 0, "reference": 0}, set()
     for choice in choices:
         item = items.get(choice.get("name", ""))
         if not item or item["status"] != "ok" or not choice.get("include"):
@@ -196,9 +202,14 @@ def commit_upload(workspace: Path, upload_id: str, choices: list[dict],
         kind = "reference" if choice.get("type") == "reference" else "primary"
         title = (choice.get("title") or item["title"]).strip()[:120]
         body = (stage / f"{item['name']}.md").read_text(encoding="utf-8").strip()
-        src_target = sources / item["name"]
-        shutil.move(str(stage / item["name"]), src_target)
-        rel_source = src_target.relative_to(workspace).as_posix()
+        target = sources / item["name"]
+        k = 1
+        while target.exists() or target in taken:  # 같은 날 같은 이름의 원본을 덮어쓰지 않는다
+            target = sources / f"{Path(item['name']).stem}-{k}{Path(item['name']).suffix}"
+            k += 1
+        taken.add(target)
+        moves.append((stage / item["name"], target))
+        rel_source = target.relative_to(workspace).as_posix()
         confidence = "high" if Path(item["name"]).suffix.lower() in {".docx", ".md", ".markdown", ".txt"} else "medium"
         parts = _split(body)
         parent = f"src_{day}_{n:03d}" if len(parts) > 1 else ""
@@ -228,9 +239,21 @@ def commit_upload(workspace: Path, upload_id: str, choices: list[dict],
                 "---",
                 "",
             ]
-            (entries / f"{day}_{source_id}.md").write_text(
-                "\n".join(front) + part_body + "\n", encoding="utf-8")
-            written.append(source_id)
+            planned.append((entries / f"{day}_{source_id}.md", "\n".join(front) + part_body + "\n", source_id))
         counts[kind] += 1
+    written, moved = [], []
+    try:
+        for path, text, _ in planned:
+            path.write_text(text, encoding="utf-8")
+            written.append(path)
+        for src, dst in moves:
+            shutil.move(str(src), dst)
+            moved.append((src, dst))
+    except Exception:
+        for path in written:
+            path.unlink(missing_ok=True)
+        for src, dst in moved:
+            shutil.move(str(dst), src)
+        raise
     discard_upload(workspace, upload_id)
-    return {"batch_id": batch_id, "source_ids": written, **counts}
+    return {"batch_id": batch_id, "source_ids": [sid for _, _, sid in planned], **counts}

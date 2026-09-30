@@ -936,3 +936,24 @@ def test_learning_requires_token_and_reports_missing_config(srv, tmp_path, monke
     with pytest.raises(urllib.error.HTTPError) as e:
         _multi(url, "/learning/uploads", [("a.md", b"x")])
     assert e.value.code == 400
+
+
+def test_learning_rejects_second_job_while_running_and_survives_bad_upload(srv, tmp_path, monkeypatch):
+    url, _ = srv
+    from core import settings
+    from core.learning import LearningManager
+    monkeypatch.setenv("KAIROS_CONFIG_DIR", str(tmp_path / "cfg"))
+    ws = tmp_path / "ws"
+    (ws / "raw" / "entries").mkdir(parents=True)
+    (ws / "config.yaml").write_text("author:\n  name: 김목사\n", encoding="utf-8")
+    settings.save({"workspace_dir": str(ws)})
+    monkeypatch.setattr(LearningManager, "has_running", lambda self, w: True)
+    up = json.load(_multi(url, "/learning/uploads",
+                          [("x.docx", b"not a zip"),
+                           ("설교.md", ("# 설교\n\n" + "은혜의 말씀 " * 60).encode())]))
+    assert [i["status"] for i in up["items"]] == ["error", "ok"]
+    with pytest.raises(urllib.error.HTTPError) as e:
+        _req(url, "/learning/jobs", {"upload_id": up["upload_id"], "items": [
+            {"name": "설교.md", "title": "설교", "type": "primary", "include": True}]})
+    assert e.value.code == 409
+    assert not list((ws / "raw" / "entries").glob("*.md"))

@@ -79,6 +79,7 @@ export default function Learning() {
   }
 
   const chosen = rows.filter(r => r.include && r.status === "ok");
+  const running = !!status?.jobs.some(j => ["queued", "absorbing", "profiling"].includes(j.status));
   return (
     <main className="page"><div className="page-inner">
       <header className="page-header"><div>
@@ -128,9 +129,10 @@ export default function Learning() {
             ))}
           </div>
           <div className="field-row" style={{ marginTop: 14 }}>
-            <button className="btn-primary" disabled={busy || !chosen.length} onClick={start}>
+            <button className="btn-primary" disabled={busy || running || !chosen.length} onClick={start}>
               학습 시작 ({chosen.length})
             </button>
+            {running && <span className="hint">이전 학습이 끝나면 시작할 수 있습니다.</span>}
             <button disabled={busy} onClick={async () => {
               if (uploadId) await discardUpload(uploadId);
               setUploadId(null); setRows([]);

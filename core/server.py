@@ -824,7 +824,10 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
                 files = self._multipart_files()
                 if files is None:
                     return self._send(400, {"error": "bad multipart upload"})
-                return self._send(200, manuscripts.stage_upload(ws, files))
+                try:
+                    return self._send(200, manuscripts.stage_upload(ws, files))
+                except Exception as exc:
+                    return self._send(400, {"error": f"업로드 처리 실패: {exc}"})
             m = re.fullmatch(r"/learning/jobs/([0-9a-f]{12})/retry", self.path)
             if m:
                 try:
@@ -863,6 +866,9 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
                 ws, reason = self._learning_workspace()
                 if reason:
                     return self._send(400, {"error": reason})
+                manager = self._learning_manager()
+                if manager.has_running(str(ws)):
+                    return self._send(409, {"error": "이전 학습이 끝난 뒤에 시작해 주세요"})
                 try:
                     commit = manuscripts.commit_upload(
                         ws, str(body.get("upload_id", "")), list(body.get("items") or []))
@@ -870,7 +876,7 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
                     return self._send(400, {"error": str(exc)})
                 if not commit["source_ids"]:
                     return self._send(400, {"error": "학습할 원고가 없습니다"})
-                job = self._learning_manager().create(str(ws), commit, settings.load())
+                job = manager.create(str(ws), commit, settings.load())
                 return self._send(202, job)
             if self.path == "/feedback":
                 try:

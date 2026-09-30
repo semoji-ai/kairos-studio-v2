@@ -148,3 +148,12 @@ def test_no_add_dir_without_output_dir(monkeypatch):
     from core.providers import claude
     done = list(claude.chat("hi"))[-1]
     assert "--add-dir" not in _json.loads(done["text"])
+
+
+def test_on_spawn_receives_child_pid(monkeypatch):
+    monkeypatch.setenv("KAIROS_CLAUDE_CMD", f"{sys.executable} {FAKE}")
+    from core.providers import claude
+    got = []
+    events = list(claude.chat("hi", cfg={"on_spawn": got.append}))
+    assert events[-1]["type"] == "done"
+    assert len(got) == 1 and isinstance(got[0], int) and got[0] > 0
