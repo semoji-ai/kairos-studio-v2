@@ -873,3 +873,33 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
   .ppt-grid { grid-template-columns: 1fr; }
   .page { padding: 28px 20px 48px; }
 }
+
+/* ── 원고 학습 ───────────────────────────────────────────── */
+.learn-list { display: grid; gap: 8px; }
+.learn-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.learn-row:not(.status-ok) { opacity: .6; }
+.learn-row.status-error { border-color: var(--danger); }
+.learn-main { display: grid; gap: 4px; min-width: 0; }
+.learn-main small { color: var(--muted); font-size: 12px; }
+.learn-title { width: 100%; font-weight: 600; }
+.learn-preview { overflow: hidden; color: var(--ink-2); font-size: 13px; white-space: nowrap; text-overflow: ellipsis; }
+.rule-badge {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  color: var(--warn);
+  background: var(--warn-soft);
+  font-size: 11px;
+  font-weight: 700;
+}
+@media (max-width: 800px) { .learn-row { grid-template-columns: auto 1fr; } .learn-row select { grid-column: 2; } }

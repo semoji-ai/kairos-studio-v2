@@ -7,6 +7,7 @@ import type { ChatEvent, Msg, Session } from "./api";
 import Settings from "./Settings";
 import BibleCoverage from "./BibleCoverage";
 import PresentationStudio from "./PresentationStudio";
+import Learning from "./Learning";
 import ArtifactPreview from "./ArtifactPreview";
 import type { ArtifactPreviewItem } from "./ArtifactPreview";
 import ReactMarkdown from "react-markdown";
@@ -15,6 +16,7 @@ import coverageIcon from "./assets/icons/coverage.png";
 import pptIcon from "./assets/icons/ppt.png";
 import reviewIcon from "./assets/icons/review.png";
 import settingsIcon from "./assets/icons/settings.png";
+import learnIcon from "./assets/icons/learn.png";
 import { displayTitle, isInternalArtifact } from "./artifactNames";
 import { Emoji } from "./emoji";
 
@@ -154,7 +156,7 @@ export default function Chat() {
   const [pendingElapsed, setPendingElapsed] = useState(0);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
-  const [view, setView] = useState<"chat" | "settings" | "bible" | "ppt">("chat");
+  const [view, setView] = useState<"chat" | "settings" | "bible" | "ppt" | "learn">("chat");
   const [preview, setPreview] = useState<ArtifactPreviewItem | null>(null);
   const [recalled, setRecalled] = useState<Record<number, number>>({}); // message_id -> recalled 건수
   const [sermonRag, setSermonRag] = useState<Record<number, number>>({});
@@ -308,6 +310,8 @@ export default function Chat() {
               on: () => setView(v => v === "bible" ? "chat" : "bible"), active: view === "bible" },
             { key: "ppt", icon: pptIcon, label: "PPT 만들기",
               on: () => setView(v => v === "ppt" ? "chat" : "ppt"), active: view === "ppt" },
+            { key: "learn", icon: learnIcon, label: "원고 학습",
+              on: () => setView(v => v === "learn" ? "chat" : "learn"), active: view === "learn" },
             { key: "review", icon: reviewIcon, label: "검토·승인",
               on: openLatestReview, active: false },
             { key: "settings", icon: settingsIcon, label: "설정",
@@ -342,6 +346,8 @@ export default function Chat() {
         <BibleCoverage />
       ) : view === "ppt" ? (
         <PresentationStudio />
+      ) : view === "learn" ? (
+        <Learning />
       ) : (
       <div className="chat-with-preview" ref={chatLayoutRef}>
       <main className="chat-main">
