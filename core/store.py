@@ -118,6 +118,13 @@ class Store:
             cur = c.execute("INSERT INTO sessions(title) VALUES (?)", (title,))
             return cur.lastrowid
 
+    def rename_session(self, session_id: int, title: str) -> bool:
+        """대화 이름 바꾸기. 앞뒤 공백 제거, 최대 100자. 없는 대화면 False."""
+        with self._conn() as c:
+            cur = c.execute("UPDATE sessions SET title=? WHERE id=?",
+                            (title.strip()[:100], session_id))
+            return cur.rowcount > 0
+
     def delete_session(self, session_id: int) -> bool:
         """세션과 그에 속한 메시지·피드백·FTS 색인을 함께 삭제한다.
 

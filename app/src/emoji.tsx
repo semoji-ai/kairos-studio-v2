@@ -8,6 +8,7 @@ import image from "./assets/emoji/image.png";
 import like from "./assets/emoji/like.png";
 import memory from "./assets/emoji/memory.png";
 import newChat from "./assets/emoji/new.png";
+import rename from "./assets/emoji/rename.png";
 import selected from "./assets/emoji/selected.png";
 import sermon from "./assets/emoji/sermon.png";
 import trash from "./assets/emoji/trash.png";
@@ -15,8 +16,8 @@ import upload from "./assets/emoji/upload.png";
 import warn from "./assets/emoji/warn.png";
 
 const SRC = {
-  dislike, doc, done, empty, fail, image, like, memory, new: newChat, selected, sermon,
-  trash, upload, warn,
+  dislike, doc, done, empty, fail, image, like, memory, new: newChat, rename, selected,
+  sermon, trash, upload, warn,
 } as const;
 
 export type EmojiName = keyof typeof SRC;

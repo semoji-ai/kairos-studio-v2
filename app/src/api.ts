@@ -41,6 +41,12 @@ export async function listMessages(sessionId: number): Promise<Msg[]> {
   return (await r.json()).messages;
 }
 
+export async function renameSession(sessionId: number, title: string): Promise<void> {
+  const r = await fetch(`/sessions?id=${sessionId}`, {
+    method: "PATCH", headers: HDRS, body: JSON.stringify({ title }) });
+  if (!r.ok) throw new Error((await r.json()).error ?? `HTTP ${r.status}`);
+}
+
 export async function deleteSession(sessionId: number): Promise<void> {
   const r = await fetch(`/sessions?id=${sessionId}`, { method: "DELETE", headers: HDRS });
   if (!r.ok) throw new Error((await r.json()).error ?? `HTTP ${r.status}`);
