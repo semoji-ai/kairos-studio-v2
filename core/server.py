@@ -729,8 +729,7 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
 
         def _setup_install_workspace(self):
             bundle_dir = Path(os.environ.get("KAIROS_BUNDLE_DIR", "."))
-            documents = Path.home() / "Documents"
-            dest_root = documents if documents.is_dir() else Path.home()
+            dest_root = settings.documents_dir()  # 윈도우 원드라이브 문서 폴더도 따라간다
             try:
                 result = setup.install_workspace(bundle_dir, dest_root)
             except FileNotFoundError as exc:
