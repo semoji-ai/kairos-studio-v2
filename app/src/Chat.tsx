@@ -315,7 +315,7 @@ export default function Chat() {
             { key: "review", icon: reviewIcon, label: "검토·승인",
               on: openLatestReview, active: false },
             { key: "settings", icon: settingsIcon, label: "설정",
-              on: () => setView(v => v === "chat" ? "settings" : "chat"), active: view === "settings" },
+              on: () => setView(v => v === "settings" ? "chat" : "settings"), active: view === "settings" },
           ] as const).map(b => (
             <button key={b.key} onClick={b.on}
                     className={`nav-item${b.active ? " is-active" : ""}`}>
