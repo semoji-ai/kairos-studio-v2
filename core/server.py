@@ -935,6 +935,26 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
                 return self._save_workspace_file(body)
             return self._send(404, {"error": "not found"})
 
+        def do_PATCH(self):
+            if not self._host_ok():
+                return self._send(403, {"error": "forbidden host"})
+            if not self._authed():
+                return self._send(401, {"error": "unauthorized"})
+            u = urlparse(self.path)
+            if u.path != "/sessions":
+                return self._send(404, {"error": "not found"})
+            try:
+                sid = int(parse_qs(u.query).get("id", [""])[0])
+            except ValueError:
+                return self._send(400, {"error": "bad id"})
+            body = self._body()
+            title = body.get("title") if isinstance(body, dict) else None
+            if not isinstance(title, str) or not title.strip():
+                return self._send(400, {"error": "title required"})
+            if not state["store"].rename_session(sid, title):
+                return self._send(404, {"error": "session not found"})
+            return self._send(200, {"ok": True, "title": title.strip()[:100]})
+
         def do_DELETE(self):
             if not self._host_ok():
                 return self._send(403, {"error": "forbidden host"})

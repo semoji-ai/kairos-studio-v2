@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  chat, deleteSession, health, listMessages, listReviews, listSessions, sendFeedback,
+  chat, deleteSession, health, renameSession, listMessages, listReviews, listSessions, sendFeedback,
   workspaceFileUrl,
 } from "./api";
 import type { ChatEvent, Msg, Session } from "./api";
@@ -156,6 +156,27 @@ export default function Chat() {
   const [pendingElapsed, setPendingElapsed] = useState(0);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+
+  function startRename(s: Session) {
+    setEditingId(s.id);
+    setEditTitle(s.title);
+  }
+
+  async function commitRename(id: number) {
+    if (editingId !== id) return;  // Enter 뒤 blur로 두 번 저장되지 않게
+    setEditingId(null);
+    const title = editTitle.trim();
+    const current = sessions.find(s => s.id === id);
+    if (!title || title === current?.title) return;
+    setSessions(list => list.map(s => s.id === id ? { ...s, title } : s));
+    try {
+      await renameSession(id, title);
+    } catch {
+      listSessions().then(setSessions);  // 실패하면 서버 값으로 되돌린다
+    }
+  }
   const [view, setView] = useState<"chat" | "settings" | "bible" | "ppt" | "learn">("chat");
   const [preview, setPreview] = useState<ArtifactPreviewItem | null>(null);
   const [recalled, setRecalled] = useState<Record<number, number>>({}); // message_id -> recalled 건수
@@ -325,20 +346,40 @@ export default function Chat() {
           ))}
         </nav>
         {sessions.length > 0 && <div className="sidebar-label">최근 대화</div>}
+        <div className="session-list">
         {sessions.map(s => (
-          <div key={s.id} onClick={() => { setSessionId(s.id); setView("chat"); }}
+          <div key={s.id} onClick={() => { if (editingId !== s.id) { setSessionId(s.id); setView("chat"); } }}
                className={`session-item${s.id === sessionId && view === "chat" ? " is-active" : ""}`}>
-            <span className="session-title">{s.title}</span>
-            <button title="대화 삭제" aria-label="대화 삭제" className="session-delete"
-                    onClick={async (e) => {
-                      e.stopPropagation();
-                      if (!confirm(`"${s.title}" 대화를 삭제할까요?`)) return;
-                      await deleteSession(s.id);
-                      if (s.id === sessionId) { setSessionId(null); setMsgs([]); }
-                      listSessions().then(setSessions);
-                    }}><Emoji name="trash" size={16} /></button>
+            {editingId === s.id ? (
+              <input className="session-rename" value={editTitle} autoFocus maxLength={100}
+                     aria-label="대화 이름"
+                     onChange={e => setEditTitle(e.target.value)}
+                     onClick={e => e.stopPropagation()}
+                     onKeyDown={e => {
+                       if (e.key === "Enter") { e.preventDefault(); commitRename(s.id); }
+                       if (e.key === "Escape") setEditingId(null);
+                     }}
+                     onBlur={() => commitRename(s.id)} />
+            ) : (
+              <span className="session-title" title={s.title}
+                    onDoubleClick={e => { e.stopPropagation(); startRename(s); }}>{s.title}</span>
+            )}
+            {editingId !== s.id && <>
+              <button title="이름 바꾸기" aria-label="이름 바꾸기" className="session-delete"
+                      onClick={e => { e.stopPropagation(); startRename(s); }}>
+                <Emoji name="rename" size={16} /></button>
+              <button title="대화 삭제" aria-label="대화 삭제" className="session-delete"
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        if (!confirm(`"${s.title}" 대화를 삭제할까요?`)) return;
+                        await deleteSession(s.id);
+                        if (s.id === sessionId) { setSessionId(null); setMsgs([]); }
+                        listSessions().then(setSessions);
+                      }}><Emoji name="trash" size={16} /></button>
+            </>}
           </div>
         ))}
+        </div>
       </aside>
       {view === "settings" ? (
         <Settings onClose={() => setView("chat")} />

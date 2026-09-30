@@ -155,3 +155,14 @@ def test_existing_db_gains_injected_refs_on_open(tmp_path):
     assert store._conn().execute(
         "SELECT COUNT(*) FROM messages_fts").fetchone()[0] == 2
 
+
+
+def test_rename_session(tmp_path):
+    from core.store import Store
+    store = Store(tmp_path / "t.db")
+    sid = store.create_session("로마서 8장 초안 잡아줘")
+    assert store.rename_session(sid, "  로마서 8장 설교  ") is True
+    assert store.list_sessions()[0]["title"] == "로마서 8장 설교"
+    assert store.rename_session(sid, "가" * 150) is True
+    assert len(store.list_sessions()[0]["title"]) == 100
+    assert store.rename_session(9999, "없는 대화") is False

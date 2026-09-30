@@ -957,3 +957,21 @@ def test_learning_rejects_second_job_while_running_and_survives_bad_upload(srv, 
             {"name": "설교.md", "title": "설교", "type": "primary", "include": True}]})
     assert e.value.code == 409
     assert not list((ws / "raw" / "entries").glob("*.md"))
+
+
+def test_rename_session_api(srv):
+    url, store = srv
+    sid = store.create_session("원래 제목")
+    resp = json.load(_req(url, f"/sessions?id={sid}", {"title": "새 제목"}, method="PATCH"))
+    assert resp == {"ok": True, "title": "새 제목"}
+    assert store.list_sessions()[0]["title"] == "새 제목"
+    for body, code in [({"title": "   "}, 400), ({"title": 3}, 400)]:
+        with pytest.raises(urllib.error.HTTPError) as e:
+            _req(url, f"/sessions?id={sid}", body, method="PATCH")
+        assert e.value.code == code
+    with pytest.raises(urllib.error.HTTPError) as e:
+        _req(url, "/sessions?id=9999", {"title": "x"}, method="PATCH")
+    assert e.value.code == 404
+    with pytest.raises(urllib.error.HTTPError) as e:
+        _req(url, f"/sessions?id={sid}", {"title": "x"}, method="PATCH", token=None)
+    assert e.value.code == 401
