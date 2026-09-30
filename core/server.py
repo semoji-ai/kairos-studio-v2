@@ -16,12 +16,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
-from core import bible_coverage, documents, providers, sermon_rag, settings, setup
+from core import bible_coverage, documents, manuscripts, providers, sermon_rag, settings, setup
 from core.artifacts import collect
 from core.distill import distill
 from core.document_versions import resolve_editable, save_version
 from core.output_workspace import instruction as output_instruction
 from core.output_workspace import mirror_outputs, session_dir as output_session_dir
+from core.learning import LearningManager
 from core.presentations import PresentationManager
 from core.recall import recall
 from core.router import route
@@ -261,6 +262,11 @@ def _workspace_info_dict(ws_str: str | None) -> dict:
             "has_claude_md": has_claude_md}
 
 
+def _learning_chat():
+    """원고 학습 작업이 쓰는 chat 함수. 테스트에서 가짜로 바꿔 끼운다."""
+    return providers.get("claude").chat
+
+
 def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTPServer:
     state = {"store": store}
 
@@ -365,7 +371,7 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
             # (토큰이 index.html 주입으로 전달되므로 정적은 인증 불가/불요).
             api_path = (
                 u.path in ("/sessions", "/messages", "/settings", "/storage", "/cli/status",
-                           "/workspace/info", "/rules", "/setup/status",
+                           "/workspace/info", "/rules", "/setup/status", "/learning/status",
                            "/setup/workspace-update", "/bible/coverage",
                            "/presentations", "/presentations/engines", "/reviews")
                 or u.path.startswith("/presentations/")
@@ -402,7 +408,11 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
                 if u.path == "/rules":
                     store = state["store"]
                     return self._send(200, {"rules": store.list_rules(active_only=False),
-                                             "undistilled": store.count_undistilled_feedback()})
+                                             "undistilled": store.count_undistilled_feedback(),
+                                             "undistilled_directives":
+                                                 store.count_undistilled_directives()})
+                if u.path == "/learning/status":
+                    return self._learning_status()
                 if u.path == "/reviews":
                     return self._list_reviews()
                 if u.path == "/sessions":
@@ -441,6 +451,41 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
             if db_path is None:
                 db_path = Path(settings.load()["data_dir"]).expanduser() / "kairos.db"
             return Path(db_path).parent
+
+        def _learning_manager(self) -> LearningManager:
+            return LearningManager(self._data_dir(), chat_fn=_learning_chat())
+
+        def _learning_workspace(self):
+            ws = settings.load().get("workspace_dir")
+            path = Path(ws).expanduser() if ws else None
+            return path, manuscripts.workspace_ready(path)
+
+        def _learning_status(self):
+            ws, reason = self._learning_workspace()
+            return self._send(200, {"ready": reason is None, "reason": reason,
+                                     "workspace_dir": str(ws) if ws else None,
+                                     "jobs": self._learning_manager().list()})
+
+        def _multipart_files(self) -> list[tuple[str, bytes]] | None:
+            """여러 파일(필드명 files)을 받는다 — 원고 학습 업로드용."""
+            ctype = self.headers.get("Content-Type", "")
+            if not ctype.lower().startswith("multipart/form-data"):
+                return None
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+            except ValueError:
+                return None
+            if length <= 0 or length > 200 * 1024 * 1024:
+                return None
+            raw = self.rfile.read(length)
+            message = BytesParser(policy=policy.default).parsebytes(
+                f"Content-Type: {ctype}\r\nMIME-Version: 1.0\r\n\r\n".encode() + raw)
+            files = []
+            for part in message.iter_parts():
+                if (part.get_param("name", header="content-disposition") == "files"
+                        and part.get_filename()):
+                    files.append((part.get_filename(), part.get_payload(decode=True) or b""))
+            return files or None
 
         def _presentation_manager(self) -> PresentationManager:
             bundle = os.environ.get("KAIROS_BUNDLE_DIR")
@@ -772,6 +817,21 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
                 return self._send(403, {"error": "forbidden host"})
             if not self._authed():
                 return self._send(401, {"error": "unauthorized"})
+            if self.path == "/learning/uploads":
+                ws, reason = self._learning_workspace()
+                if reason:
+                    return self._send(400, {"error": reason})
+                files = self._multipart_files()
+                if files is None:
+                    return self._send(400, {"error": "bad multipart upload"})
+                return self._send(200, manuscripts.stage_upload(ws, files))
+            m = re.fullmatch(r"/learning/jobs/([0-9a-f]{12})/retry", self.path)
+            if m:
+                try:
+                    job = self._learning_manager().retry(m.group(1), settings.load())
+                except ValueError as exc:
+                    return self._send(400, {"error": str(exc)})
+                return self._send(202, job)
             if self.path == "/presentations":
                 upload = self._multipart()
                 if upload is None:
@@ -799,6 +859,19 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
             body = self._body()
             if body is None:
                 return self._send(400, {"error": "bad json"})
+            if self.path == "/learning/jobs":
+                ws, reason = self._learning_workspace()
+                if reason:
+                    return self._send(400, {"error": reason})
+                try:
+                    commit = manuscripts.commit_upload(
+                        ws, str(body.get("upload_id", "")), list(body.get("items") or []))
+                except (OSError, ValueError, KeyError) as exc:
+                    return self._send(400, {"error": str(exc)})
+                if not commit["source_ids"]:
+                    return self._send(400, {"error": "학습할 원고가 없습니다"})
+                job = self._learning_manager().create(str(ws), commit, settings.load())
+                return self._send(202, job)
             if self.path == "/feedback":
                 try:
                     fid = state["store"].add_feedback(int(body["message_id"]),
@@ -863,6 +936,13 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
             if not self._authed():
                 return self._send(401, {"error": "unauthorized"})
             u = urlparse(self.path)
+            m = re.fullmatch(r"/learning/uploads/([0-9a-f]{12})", u.path)
+            if m:
+                ws, reason = self._learning_workspace()
+                if reason:
+                    return self._send(400, {"error": reason})
+                manuscripts.discard_upload(ws, m.group(1))
+                return self._send(200, {"ok": True})
             if u.path == "/sessions":
                 q = parse_qs(u.query)
                 try:
@@ -1066,7 +1146,8 @@ def make_server(host: str, port: int, token: str, store: Store) -> ThreadingHTTP
                        "artifacts": len(parts)})
 
             if (cfg.get("learning_recall_enabled", True)
-                    and store.count_undistilled_feedback() >= DISTILL_THRESHOLD):
+                    and store.count_undistilled_feedback()
+                    + store.count_undistilled_directives() >= DISTILL_THRESHOLD):
                 def _auto_distill():
                     if not _distill_lock.acquire(blocking=False):
                         return
