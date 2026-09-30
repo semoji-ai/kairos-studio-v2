@@ -41,7 +41,7 @@ def test_distill_no_feedback_skips(tmp_path, monkeypatch):
 
     result = distill(store, claude_provider.chat)
 
-    assert result == {"added": [], "skipped": "no new feedback"}
+    assert result == {"added": [], "candidates": [], "skipped": "no new feedback"}
     assert store.list_rules() == []
 
 
